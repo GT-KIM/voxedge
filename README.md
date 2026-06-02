@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="320" alt="voxedge demo — airplane mode on, a Korean question, an on-device spoken answer">
+  <img src="docs/assets/demo.gif" width="320" alt="voxedge demo — airplane mode on, an English question, an on-device spoken answer">
 </p>
 
-<sub>Airplane mode on (no Wi-Fi/cell): a Korean question → an on-device spoken answer. ASR, a 4B LLM,
+<sub>Airplane mode on (no Wi-Fi/cell): an English question → an on-device spoken answer. ASR, a 4B LLM,
 and TTS all run on the phone; first audio ~0.6 s after the words are recognized. (GIF is silent —
 the text streams on screen; the voice answer is in the video clips.)</sub>
 
