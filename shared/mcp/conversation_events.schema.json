@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conversational-ai-agent/shared/mcp/conversation_events.schema.json",
+  "title": "Conversation runtime streaming events + durable turn record",
+  "description": "Two layers: (1) runtime streaming events between pipeline stages for low-latency speech-to-speech, and (2) a durable per-turn conversation record aggregated after the turn. The runtime path MUST NOT be gated on a complete record (latency). A message is EITHER an event OR a turn_record, never both.",
+  "type": "object",
+  "oneOf": [
+    { "required": ["event"], "not": { "required": ["turn_record"] } },
+    { "required": ["turn_record"], "not": { "required": ["event"] } }
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "event": { "$ref": "#/$defs/Event" },
+    "turn_record": { "$ref": "#/$defs/TurnRecord" }
+  },
+  "$defs": {
+    "Event": {
+      "type": "object",
+      "required": ["schema_version", "type", "conversation_id", "turn_id", "generation_id", "seq", "t_mono_ms"],
+      "properties": {
+        "schema_version": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "session.start", "session.end",
+            "asr.partial", "asr.final",
+            "prompt.assembled",
+            "llm.text_delta", "llm.turn_end",
+            "tts.chunk_request", "tts.audio_chunk", "tts.playback_start", "tts.playback_end",
+            "control.barge_in", "control.cancel",
+            "runtime.thermal", "runtime.degrade",
+            "error"
+          ]
+        },
+        "conversation_id": { "type": "string" },
+        "turn_id": { "type": "string" },
+        "generation_id": {
+          "type": "string",
+          "description": "Cancel epoch. Bumped on every barge-in/cancel. Consumers MUST drop any event whose generation_id is not the current one (kills stale llm/tts/audio from a superseded turn)."
+        },
+        "seq": { "type": "integer", "minimum": 0, "description": "Monotonic per-turn event sequence for ordering/dedup." },
+        "t_mono_ms": { "type": "number", "description": "Monotonic clock timestamp (ms) for latency-waterfall measurement." },
+        "role": { "type": "string", "enum": ["user", "assistant", "tool", "system"] },
+        "text": { "type": "string", "description": "ASR text, LLM delta, or clause to synthesize." },
+        "is_final": { "type": "boolean" },
+        "clause_index": { "type": "integer", "minimum": 0, "description": "Index of the clause chunk handed to TTS (clause-level streaming)." },
+        "chunk_id": { "type": "string", "description": "Stable id correlating tts.chunk_request → tts.audio_chunk(s) → playback_start/end for one clause." },
+        "asr_detail": {
+          "type": "object",
+          "description": "Present on asr.partial/asr.final.",
+          "properties": {
+            "language": { "type": "string" },
+            "confidence": { "type": "number" },
+            "partial_stable": { "type": "boolean", "description": "Whether this partial prefix is stable (won't be revised)." },
+            "endpoint_reason": { "type": "string", "enum": ["silence", "max_duration", "barge_in", "no_speech_timeout", "manual"] },
+            "speech_start_ms": { "type": "number" },
+            "speech_end_ms": { "type": "number" },
+            "normalization": { "type": "string", "description": "Transcript normalization mode applied." }
+          }
+        },
+        "audio": {
+          "type": "object",
+          "description": "Required on tts.audio_chunk.",
+          "required": ["pcm_ref", "sample_rate", "num_samples"],
+          "properties": {
+            "pcm_ref": { "type": "string", "description": "Handle/offset to PCM buffer (audio is not inlined as JSON)." },
+            "sample_rate": { "type": "integer" },
+            "num_samples": { "type": "integer" },
+            "is_last": { "type": "boolean" }
+          }
+        },
+        "cancel": {
+          "type": "object",
+          "description": "Required on control.barge_in / control.cancel.",
+          "required": ["scope", "new_generation_id"],
+          "properties": {
+            "scope": { "type": "string", "enum": ["turn", "tts_only", "playback_only"] },
+            "new_generation_id": { "type": "string", "description": "Epoch to switch to; events with the old generation_id are dropped." },
+            "stop_playback_within_ms": { "type": "number", "default": 200 }
+          }
+        },
+        "thermal": {
+          "type": "object",
+          "description": "Required on runtime.thermal.",
+          "required": ["level"],
+          "properties": {
+            "hottest_zone_c": { "type": "number" },
+            "os_thermal_state": { "type": "string", "description": "Android PowerManager thermal status / iOS ProcessInfo.thermalState." },
+            "level": { "type": "string", "enum": ["nominal", "elevated", "critical"] }
+          }
+        },
+        "degrade": {
+          "type": "object",
+          "description": "Required on runtime.degrade — the policy actually applied.",
+          "required": ["reason", "actions"],
+          "properties": {
+            "reason": { "type": "string", "enum": ["thermal", "memory", "battery"] },
+            "actions": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["lower_power_profile", "reduce_flow_steps", "shorten_response", "pause_new_turns"] }
+            }
+          }
+        },
+        "error": {
+          "type": "object",
+          "description": "Required on error.",
+          "required": ["code", "stage"],
+          "properties": {
+            "code": { "type": "string" },
+            "stage": { "type": "string", "enum": ["asr", "prompt", "llm", "tts", "playback", "runtime"] },
+            "recoverable": { "type": "boolean" },
+            "message": { "type": "string" }
+          }
+        },
+        "metadata": { "type": "object", "description": "Platform-neutral extension bag (unknown keys ignored, never rejected)." }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "asr.final" } } },
+          "then": { "required": ["text", "is_final", "asr_detail"] } },
+        { "if": { "properties": { "type": { "const": "llm.text_delta" } } },
+          "then": { "required": ["text"] } },
+        { "if": { "properties": { "type": { "const": "tts.chunk_request" } } },
+          "then": { "required": ["text", "clause_index", "chunk_id"] } },
+        { "if": { "properties": { "type": { "const": "tts.audio_chunk" } } },
+          "then": { "required": ["chunk_id", "audio"] } },
+        { "if": { "properties": { "type": { "enum": ["tts.playback_start", "tts.playback_end"] } } },
+          "then": { "required": ["chunk_id"] } },
+        { "if": { "properties": { "type": { "enum": ["control.barge_in", "control.cancel"] } } },
+          "then": { "required": ["cancel"] } },
+        { "if": { "properties": { "type": { "const": "runtime.thermal" } } },
+          "then": { "required": ["thermal"] } },
+        { "if": { "properties": { "type": { "const": "runtime.degrade" } } },
+          "then": { "required": ["degrade"] } },
+        { "if": { "properties": { "type": { "const": "error" } } },
+          "then": { "required": ["error"] } }
+      ]
+    },
+    "TurnRecord": {
+      "type": "object",
+      "description": "Durable per-turn conversation record. NOT MCP itself — a replay/analytics/eval log aggregated AFTER the turn from the event stream. A real MCP tool/resource bridge is added later, only at actual tool boundaries (tool_calls below is the forward hook).",
+      "required": ["schema_version", "conversation_id", "turn_id", "generation_id", "role", "content"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0.0" },
+        "conversation_id": { "type": "string" },
+        "turn_id": { "type": "string" },
+        "generation_id": { "type": "string", "description": "Final (un-superseded) epoch this record reflects." },
+        "role": { "type": "string", "enum": ["user", "assistant", "tool"] },
+        "content": { "type": "string", "description": "Full generated text for the turn." },
+        "spoken_content": { "type": "string", "description": "Text actually synthesized+played (may differ from content on barge-in)." },
+        "asr": {
+          "type": "object",
+          "properties": {
+            "final_text": { "type": "string" },
+            "language": { "type": "string" },
+            "confidence": { "type": "number" },
+            "endpoint_reason": { "type": "string" }
+          }
+        },
+        "timing_ms": {
+          "type": "object",
+          "description": "Measured waterfall (see docs/design/latency_budget.md).",
+          "properties": {
+            "speech_end_to_endpoint": { "type": "number" },
+            "endpoint_to_asr_final": { "type": "number" },
+            "asr_final_to_llm_first_token": { "type": "number" },
+            "llm_first_token_to_first_tts_chunk": { "type": "number" },
+            "first_tts_chunk_to_first_pcm": { "type": "number" },
+            "asr_final_to_first_audio": { "type": "number" }
+          }
+        },
+        "tts": {
+          "type": "object",
+          "properties": {
+            "voice": { "type": "string" },
+            "precision": { "type": "string", "enum": ["fp16", "int8"] },
+            "flow_steps": { "type": "integer" },
+            "chunk_latent_frames": { "type": "integer" }
+          }
+        },
+        "tool_calls": {
+          "type": "array",
+          "description": "Forward hook for a future real-MCP tool/resource bridge (empty today).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "call_id": { "type": "string" },
+              "tool": { "type": "string" },
+              "status": { "type": "string", "enum": ["ok", "error"] }
+            }
+          }
+        },
+        "barged_in": { "type": "boolean" },
+        "metadata": { "type": "object" }
+      }
+    }
+  }
+}

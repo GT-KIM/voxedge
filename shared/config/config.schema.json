@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conversational-ai-agent/shared/config/config.schema.json",
+  "title": "Shared cross-platform runtime configuration",
+  "description": "Platform-neutral config contract. Android and iOS may store values differently but key names and meaning are equivalent. Defaults reflect 2026-05-30 SM8750 measurements.",
+  "type": "object",
+  "required": ["schema_version", "asr", "prompt", "llm", "tts", "runtime"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "asr": {
+      "type": "object",
+      "description": "ASR behind a shared AsrEngine interface. Phase A = platform OS recognizer; Phase B = owned sherpa-onnx model. See docs/design/asr_selection.md.",
+      "required": ["engine", "mode", "language", "endpoint_silence_ms"],
+      "properties": {
+        "engine": { "type": "string", "enum": ["platform", "sherpa-onnx"], "default": "platform", "description": "Phase A 'platform' = Android SpeechRecognizer (on-device) / iOS SpeechAnalyzer|SFSpeechRecognizer. Phase B 'sherpa-onnx' = owned offline model." },
+        "mode": { "type": "string", "enum": ["chunked", "streaming"], "default": "streaming", "description": "Platform recognizers stream partials. (Owned chunked Whisper would set 'chunked'.)" },
+        "language": { "type": "string", "examples": ["ko-KR", "en-US", "auto"], "default": "ko-KR" },
+        "endpoint_silence_ms": { "type": "integer", "default": 350, "description": "Silence before declaring end-of-speech; directly sets latency stage 1." },
+        "offline_required": { "type": "boolean", "default": true },
+        "platform": {
+          "type": "object",
+          "description": "Phase A platform-ASR guardrails (engine=platform).",
+          "properties": {
+            "require_on_device": { "type": "boolean", "default": true, "description": "Use OS on-device recognition only (createOnDeviceSpeechRecognizer / supportsOnDeviceRecognition)." },
+            "allow_network_fallback": { "type": "boolean", "default": false, "description": "If on-device unavailable: false = block ASR (preserve offline claim); true = network fallback WITH a user-visible indicator (offline claim relaxed)." }
+          }
+        },
+        "owned_model": {
+          "type": "object",
+          "description": "Phase B owned-model settings (engine=sherpa-onnx).",
+          "properties": {
+            "model": { "type": "string", "default": "whisper-small", "description": "whisper-small | whisper-base | sense-voice | streaming-zipformer-korean." },
+            "model_path": { "type": "string" },
+            "precision": { "type": "string", "enum": ["fp32", "int8"], "default": "int8" }
+          }
+        }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "required": ["template_id"],
+      "properties": {
+        "template_id": { "type": "string", "default": "base_system_prompt" },
+        "system_prompt_path": { "type": "string", "default": "shared/prompts/base_system_prompt.md" }
+      }
+    },
+    "llm": {
+      "type": "object",
+      "required": ["model_path", "tokenizer_path", "context_size", "max_response_tokens"],
+      "properties": {
+        "model_path": { "type": "string" },
+        "tokenizer_path": { "type": "string" },
+        "context_size": { "type": "integer", "default": 4096 },
+        "max_response_tokens": { "type": "integer", "default": 120, "description": "Hard response cap for SPOKEN UX (~120 tok ≈ a few sentences; 256 is a long monologue at 22 tok/s). Latency/thermal cap." },
+        "recent_window_tokens": { "type": "integer", "default": 2200 },
+        "rolling_summary_tokens": { "type": "integer", "default": 400 },
+        "sampler": {
+          "type": "object",
+          "properties": {
+            "temp": { "type": "number", "default": 0.8 },
+            "top_k": { "type": "integer", "default": 40 },
+            "top_p": { "type": "number", "default": 0.95 }
+          }
+        }
+      }
+    },
+    "tts": {
+      "type": "object",
+      "required": ["voice", "model_dir", "flow_steps", "chunk_latent_frames"],
+      "properties": {
+        "voice": { "type": "string", "default": "F1" },
+        "model_dir": { "type": "string", "description": "Directory of graph-prepared component DLCs/CoreML models." },
+        "precision": { "type": "string", "enum": ["fp16", "int8"], "default": "fp16" },
+        "flow_steps": { "type": "integer", "default": 6, "description": "K: flow-matching steps; dominant TTS latency knob. K=6 chosen by listening (K=4 under-converged, K=6 matches K=8). Supertonic default 8, range 5-12." },
+        "chunk_latent_frames": { "type": "integer", "default": 128, "description": "Short-chunk latent length (~1.5s) for low first-audio latency." },
+        "speed": { "type": "number", "default": 1.0 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["power_profile", "first_audio_p95_ms"],
+      "properties": {
+        "power_profile": { "type": "string", "enum": ["low", "balanced", "burst", "auto"], "default": "auto", "description": "auto = state-driven switching per speech_loop_state_machine.md" },
+        "first_audio_p95_ms": { "type": "integer", "default": 1400, "description": "ASR-final → first semantic audio P95 target." },
+        "barge_in_enabled": { "type": "boolean", "default": true },
+        "barge_in_stop_ms": { "type": "integer", "default": 200, "description": "Max time to stop audible playback after barge-in (mid-clause)." },
+        "use_os_thermal_state": { "type": "boolean", "default": true, "description": "Prefer OS thermal status (Android PowerManager.getCurrentThermalStatus / iOS ProcessInfo.thermalState) as the primary degrade signal; raw zone temps are a secondary hint." },
+        "thermal_elevated_c": { "type": "number", "default": 80, "description": "Secondary raw-zone hint; apply hysteresis." },
+        "thermal_critical_c": { "type": "number", "default": 95 },
+        "thermal_hysteresis_c": { "type": "number", "default": 6, "description": "Must cool this far below a threshold before clearing the degrade level (prevents flapping; init spike measured ~103 °C, steady ~70 °C)." }
+      }
+    },
+    "mcp_schema_version": { "type": "string", "const": "1.0.0", "description": "Pins the conversation contract version (shared/mcp)." }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "phase": "0",
+  "status": "source_models_downloaded",
+  "last_verified_date": "2026-05-27",
+  "storage_policy": {
+    "local_root": "models/original",
+    "commit_large_artifacts": false
+  },
+  "sources": [
+    {
+      "component": "llm",
+      "requested_name": "Gemma4-E2B",
+      "provided_url": "https://huggingface.co/google/gemma-4-31B-it",
+      "provided_url_model_id": "google/gemma-4-31B-it",
+      "selected_model_id": "google/gemma-4-E2B-it",
+      "model_url": "https://huggingface.co/google/gemma-4-E2B-it",
+      "candidate_model_ids": [
+        "google/gemma-4-E2B-it",
+        "google/gemma-4-31B-it"
+      ],
+      "license_observed": "apache-2.0",
+      "artifact_format_observed": "safetensors",
+      "precision_target": "bf16_original",
+      "local_path_after_download": "models/original/llm/google__gemma-4-E2B-it",
+      "checksum_manifest_after_download": "converter/phase0/checksums.sha256",
+      "downloaded_size_bytes_excluding_cache": 10278846104,
+      "downloaded_file_count_excluding_cache": 9,
+      "status": "downloaded",
+      "decision_required": null
+    },
+    {
+      "component": "tts",
+      "requested_name": "supertonic3",
+      "provided_url": "https://github.com/supertone-inc/supertonic",
+      "model_id": "Supertone/supertonic-3",
+      "model_url": "https://huggingface.co/Supertone/supertonic-3",
+      "license_observed": "openrail-m",
+      "artifact_format_observed": "onnx",
+      "precision_target": "source_onnx_original",
+      "local_path_after_download": "models/original/tts/supertonic-3",
+      "checksum_manifest_after_download": "converter/phase0/checksums.sha256",
+      "downloaded_size_bytes_excluding_cache": 414728474,
+      "downloaded_file_count_excluding_cache": 38,
+      "status": "downloaded",
+      "decision_required": null
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose-only app: a minimal no-action-bar theme based on the platform Material theme.
+         (We don't depend on the Material Components XML theme library.) -->
+    <style name="Theme.ConversationalAi" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

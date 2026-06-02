@@ -1,0 +1,64 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.antigravitycli/
+
+# Python test/runtime files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Android build output
+apps/android/.gradle/
+apps/android/build/
+apps/android/**/build/
+apps/android/local.properties
+apps/android/app/libs/
+apps/android/app/src/main/jniLibs/
+apps/android/app/src/main/assets/qairt_dsp/
+
+# iOS build output
+apps/ios/.build/
+apps/ios/DerivedData/
+apps/ios/*.xcworkspace/xcuserdata/
+apps/ios/*.xcodeproj/xcuserdata/
+
+# Model and SDK artifacts
+models/artifacts/
+models/original/
+models/**/*.dlc
+models/**/*.mlpackage
+models/**/*.mlmodel
+models/**/*.safetensors
+models/**/*.gguf
+models/**/*.onnx
+qairt/*.zip
+qairt/extracted/
+tools/model_compile/qairt/*.zip
+tools/model_compile/qairt/extracted/
+tools/model_compile/qairt/runtime-libs/
+
+# Logs
+*.log
+runs/
+output/
+NVIDIA Corporation/
+
+# transient in-project working copies
+.work/
+
+# Internal / private — NOT for the public repo (branding strategy, employer context,
+# internal critique/process, raw working notes). Keep locally; never commit.
+docs/MEMORY.md
+docs/PLAN.md
+docs/launch/
+docs/review/
+AGENTS.md
+docs/LONG_TERM_MEMORY.md

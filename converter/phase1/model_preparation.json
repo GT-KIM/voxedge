@@ -1,0 +1,326 @@
+{
+  "phase": "1",
+  "status": "phase1_host_artifacts_prepared_device_smoke_pending_no_connected_device",
+  "target": {
+    "platform": "android",
+    "soc": "SM8750",
+    "runtime": "qualcomm_genie_qnn",
+    "quantization": "int8",
+    "runtime_power_profile": "burst"
+  },
+  "qairt": {
+    "archive": "tools/model_compile/qairt/v2.46.0.260424.zip",
+    "expected_root_after_extract": "tools/model_compile/qairt/extracted/qairt/2.46.0.260424",
+    "workspace_status": "extracted_and_validated_in_local_wsl",
+    "python_venv_status": "created_and_used",
+    "python_venv_path": "$HOME/.venvs/qairt-2.46.0-py310",
+    "runtime_dependency_status": "local_libcxx_libcxxabi_libomp_libunwind_extracted",
+    "runtime_dependency_path": "tools/model_compile/qairt/runtime-libs/ubuntu-22.04/root",
+    "host_triplet": "x86_64-linux-clang",
+    "observed_tools": [
+      "bin/x86_64-linux-clang/snpe-onnx-to-dlc",
+      "bin/x86_64-linux-clang/snpe-dlc-quantize",
+      "bin/x86_64-linux-clang/snpe-dlc-graph-prepare",
+      "bin/x86_64-linux-clang/qnn-onnx-converter",
+      "bin/x86_64-linux-clang/qnn-model-lib-generator",
+      "bin/x86_64-linux-clang/qnn-context-binary-generator",
+      "bin/x86_64-linux-clang/qnn-net-run",
+      "bin/x86_64-linux-clang/qnn-throughput-net-run",
+      "bin/x86_64-linux-clang/genie-t2t-run"
+    ]
+  },
+  "models": [
+    {
+      "component": "llm",
+      "model_id": "qualcomm/Qwen3-4B-Instruct-2507",
+      "source_path": "models/artifacts/android-qairt/llm/qwen3-4b-instruct-2507/extracted/qwen3_4b_instruct_2507-genie-w4a16-qualcomm_snapdragon_8_elite",
+      "source_format": "qualcomm_ai_hub_genie_bundle",
+      "source_dtype": "w4a16",
+      "architecture": "Qwen3ForCausalLM",
+      "preparation_status": "genie_bundle_downloaded_and_validated_host_side",
+      "next_artifact_required": "android_device_smoke_test_with_genie-t2t-run",
+      "qualcomm_ai_hub": {
+        "model_card": "https://aihub.qualcomm.com/mobile/models/qwen3_4b_instruct_2507",
+        "huggingface_repo": "https://huggingface.co/qualcomm/Qwen3-4B-Instruct-2507",
+        "genie_tutorial": "https://github.com/qualcomm/ai-hub-apps/tree/main/tutorials/llm_on_genie",
+        "runtime": "GENIE",
+        "precision": "w4a16",
+        "minimum_qnn_sdk_version": "2.45.0",
+        "local_qairt_version": "2.46.0.260424",
+        "target_chipset": "Snapdragon 8 Elite Mobile",
+        "target_soc": "SM8750",
+        "supported_context_lengths": [
+          512,
+          1024,
+          2048,
+          3072,
+          4096
+        ],
+        "default_context_length": 4096,
+        "fallback_context_length": "custom_export_required_for_2048_or_1024",
+        "prompt_processor_sequence_length": 128,
+        "supported_languages": "100+ languages and dialects",
+        "license": "APACHE-2.0",
+        "download_script": "converter/phase1/fetch_qwen3_4b_instruct_2507_genie_bundle.sh",
+        "validation_script": "converter/phase1/validate_qwen3_genie_bundle.py",
+        "plan": "converter/phase1/qwen3_4b_instruct_2507_genie_plan.md"
+      },
+      "prepared_artifacts": {
+        "asset_selection": "models/artifacts/android-qairt/llm/qwen3-4b-instruct-2507/qwen3_asset_selection.json",
+        "download_log": "models/artifacts/android-qairt/logs/qwen3_4b_instruct_2507_genie_download_20260528.log",
+        "download_zip": "models/artifacts/android-qairt/llm/qwen3-4b-instruct-2507/downloads/qwen3_4b_instruct_2507-genie-w4a16-qualcomm_snapdragon_8_elite.zip",
+        "download_zip_bytes": 2532949886,
+        "bundle_dir": "models/artifacts/android-qairt/llm/qwen3-4b-instruct-2507/extracted/qwen3_4b_instruct_2507-genie-w4a16-qualcomm_snapdragon_8_elite",
+        "bundle_manifest": "models/artifacts/android-qairt/llm/qwen3-4b-instruct-2507/qwen3_genie_bundle_manifest.json",
+        "bundle_validation": "models/artifacts/android-qairt/llm/qwen3-4b-instruct-2507/qwen3_genie_bundle_validation.json",
+        "validated_context_size": 4096,
+        "context_binary_parts": [
+          "qwen3_4b_instruct_2507_w4a16_part_1_of_4.bin",
+          "qwen3_4b_instruct_2507_w4a16_part_2_of_4.bin",
+          "qwen3_4b_instruct_2507_w4a16_part_3_of_4.bin",
+          "qwen3_4b_instruct_2507_w4a16_part_4_of_4.bin"
+        ]
+      },
+      "device_smoke_test": {
+        "status": "pending_no_connected_android_device",
+        "adb_path": "C:/Users/PC/AppData/Local/Android/Sdk/platform-tools/adb.exe",
+        "adb_devices_result": "no devices attached",
+        "required_runtime": [
+          "tools/model_compile/qairt/extracted/qairt/2.46.0.260424/bin/aarch64-android/genie-t2t-run",
+          "tools/model_compile/qairt/extracted/qairt/2.46.0.260424/lib/aarch64-android/libGenie.so"
+        ]
+      },
+      "runtime_contract": {
+        "prompt_format": "chatml",
+        "required_bundle_file": "genie_config.json",
+        "recommended_smoke_test": "genie-t2t-run -c genie_config.json --prompt_file prompt.txt --profile qwen3_profile.txt",
+        "android_integration": "Genie SDK after command-line bundle smoke test"
+      },
+      "notes": [
+        "This is the primary Android Qualcomm LLM from this point forward.",
+        "Use pre-exported Qualcomm AI Hub Genie assets instead of direct decoder graph surgery for the first product demo.",
+        "Downloaded pre-exported bundle has context length 4096; shorter context assets require custom export or another Qualcomm bundle.",
+        "Use prompt files with real newlines for ChatML formatting.",
+        "Gemma4 remains a research branch and must not block the Android demo path."
+      ]
+    },
+    {
+      "component": "llm_research_gemma4",
+      "model_id": "google/gemma-4-E2B-it",
+      "source_path": "models/original/llm/google__gemma-4-E2B-it",
+      "source_format": "safetensors",
+      "source_dtype": "bfloat16",
+      "qnn_source": {
+        "model_id": "onnx-community/gemma-4-E2B-it-ONNX",
+        "source_path": "models/original/llm/onnx-community__gemma-4-E2B-it-ONNX",
+        "source_format": "onnx_external_data_fp16"
+      },
+      "architecture": "Gemma4ForConditionalGeneration",
+      "text_config": {
+        "hidden_size": 1536,
+        "num_hidden_layers": 35,
+        "num_attention_heads": 8,
+        "num_key_value_heads": 1,
+        "vocab_size": 262144,
+        "sliding_window": 512,
+        "max_position_embeddings": 131072
+      },
+      "preparation_status": "direct_qnn_dry_run_blocked_by_decoder_rewrite",
+      "next_artifact_required": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/gemma4_qnn_contract.json",
+      "direct_qnn": {
+        "source_model_id": "onnx-community/gemma-4-E2B-it-ONNX",
+        "source_path": "models/original/llm/onnx-community__gemma-4-E2B-it-ONNX",
+        "rewritten_onnx_path": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/rewritten_onnx",
+        "output_dir": "models/artifacts/android-qairt/llm/gemma4-direct-qnn",
+        "target_soc_model": "SM8750",
+        "htp_arch": "v79",
+        "context_soc_model": 69,
+        "runtime_power_profile": "burst",
+        "default_compile_mode": "plan",
+        "runtime_loop_owner": "android_app",
+        "rewrite_status": {
+          "rewritten_onnx_path": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/rewritten_onnx",
+          "report": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/rewrite_report.json",
+          "completed_rewrites": [
+            "external_data_shard_materialization",
+            "text_only_embed_tokens_without_multimodal_where",
+            "fp16_embed_decoder_handoff_without_boundary_casts",
+            "SimplifiedLayerNormalization_to_primitive_rms_norm"
+          ]
+        },
+        "qnn_dry_run_status": {
+          "contract": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/gemma4_qnn_contract.json",
+          "plan": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/gemma4_direct_qnn_plan.json",
+          "rewritten_log": "models/artifacts/android-qairt/logs/gemma4_direct_qnn_rewritten_dryrun_20260528.log",
+          "embed_tokens": "reaches_dry_run_with_shape_warnings",
+          "decoder_model_merged": "blocked_by_unsupported_fused_decoder_ops",
+          "decoder_blockers": [
+            "com.microsoft::RotaryEmbedding",
+            "com.microsoft::GroupQueryAttention",
+            "Gelu",
+            "Where",
+            "Expand",
+            "Split_num_outputs_attribute",
+            "Cast_attribute_handling",
+            "dynamic_shape_reshape_constants"
+          ]
+        },
+        "components": [
+          {
+            "name": "embed_tokens",
+            "onnx": "models/original/llm/onnx-community__gemma-4-E2B-it-ONNX/onnx/embed_tokens_fp16.onnx",
+            "qnn_graph_name": "gemma4_embed_tokens",
+            "context_binary": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/contexts/gemma4_embed_tokens.serialized.bin"
+          },
+          {
+            "name": "decoder_model_merged",
+            "onnx": "models/original/llm/onnx-community__gemma-4-E2B-it-ONNX/onnx/decoder_model_merged_fp16.onnx",
+            "qnn_graph_name": "gemma4_decoder",
+            "context_binary": "models/artifacts/android-qairt/llm/gemma4-direct-qnn/contexts/gemma4_decoder.serialized.bin"
+          }
+        ],
+        "expected_runtime_inputs": [
+          "tokenizer",
+          "chat_template",
+          "input_ids",
+          "inputs_embeds",
+          "per_layer_inputs",
+          "position_ids",
+          "attention_mask",
+          "past_key_values"
+        ]
+      },
+      "notes": [
+        "Downloaded source is not directly accepted by snpe-*-to-dlc.",
+        "QAIRT Genie packaging is not the selected path because local GenAI builder support does not expose a Gemma4-compatible preset.",
+        "Use ONNX-community Gemma4 FP16 artifacts as the QNN source for embed_tokens and decoder_model_merged.",
+        "Initial direct-QNN dry-run now reaches the decoder after compatibility rewrites, but decoder conversion is blocked by fused ONNX Runtime attention and activation operators.",
+        "The old no-cache ONNX export remains a converter smoke test, not the production generation artifact.",
+        "Production generation requires custom Android tokenizer, chat-template, sampling, and KV-cache orchestration around QNN context binaries.",
+        "Tokenizer and chat template must stay bundled with the runtime package."
+      ]
+    },
+    {
+      "component": "tts",
+      "model_id": "Supertone/supertonic-3",
+      "source_path": "models/original/tts/supertonic-3",
+      "source_format": "onnx",
+      "sample_rate": 44100,
+      "preparation_status": "int8_graph_prepared_with_random_calibration",
+      "static_profile": {
+        "batch_size": 1,
+        "text_length": 256,
+        "latent_length": 1000,
+        "static_onnx_path": "models/artifacts/android-qairt/tts/static_onnx",
+        "forced_opset17_static_onnx_path": "models/artifacts/android-qairt/tts/static_onnx_opset17_forced",
+        "rewritten_onnx_path": "models/artifacts/android-qairt/tts/rewritten_onnx_venv_l1000"
+      },
+      "random_calibration": {
+        "purpose": "pipeline_smoke_test_only",
+        "samples_per_component": 8,
+        "seed": 20260528,
+        "manifest": "models/artifacts/android-qairt/calibration/tts/random_calibration_manifest.json",
+        "generation_log": "models/artifacts/android-qairt/logs/generate_random_tts_calibration_20260528.log",
+        "notes": [
+          "Random calibration is not representative calibration and must not be used for quality claims.",
+          "SNPE DLC inputs for text_ids are Int_32 even though the rewritten ONNX inputs are INT64."
+        ]
+      },
+      "conversion_attempts": [
+        {
+          "tool": "snpe-onnx-to-dlc",
+          "source": "original_onnx_with_symbol_overrides",
+          "result": "failed",
+          "log": "models/artifacts/android-qairt/logs/duration_predictor_symbol_test.log",
+          "failure": "Transpose shape inference error in duration_predictor"
+        },
+        {
+          "tool": "snpe-onnx-to-dlc",
+          "source": "static_onnx",
+          "result": "failed",
+          "log": "models/artifacts/android-qairt/logs/convert_tts_static_onnx_to_dlc.log",
+          "failure": "Transpose shape inference error in duration_predictor"
+        },
+        {
+          "tool": "snpe-onnx-to-dlc",
+          "source": "forced_opset17_static_onnx",
+          "result": "failed",
+          "log": "models/artifacts/android-qairt/logs/convert_tts_forced_opset17_to_dlc.log",
+          "failure": "Transpose shape inference error in duration_predictor"
+        },
+        {
+          "tool": "qnn-onnx-converter",
+          "source": "forced_opset17_static_onnx",
+          "result": "failed",
+          "log": "models/artifacts/android-qairt/logs/vocoder_qnn_convert.log",
+          "failure": "Reshape shape inference error in vocoder"
+        },
+        {
+          "tool": "snpe-onnx-to-dlc",
+          "source": "rewritten_onnx_venv_l1000",
+          "result": "succeeded",
+          "log": "models/artifacts/android-qairt/logs/convert_tts_rewritten_onnx_venv_l1000_to_dlc.log",
+          "outputs": [
+            "models/artifacts/android-qairt/tts/float/duration_predictor.dlc",
+            "models/artifacts/android-qairt/tts/float/text_encoder.dlc",
+            "models/artifacts/android-qairt/tts/float/vector_estimator.dlc",
+            "models/artifacts/android-qairt/tts/float/vocoder.dlc"
+          ]
+        },
+        {
+          "tool": "snpe-dlc-quantize_and_snpe-dlc-graph-prepare",
+          "source": "float_dlc_with_random_calibration",
+          "result": "succeeded",
+          "log": "models/artifacts/android-qairt/logs/convert_tts_int8_random_calibration_graph_prepare_20260528.log",
+          "graph_prepare_options": [
+            "--htp_socs=sm8750",
+            "--optimization_level=3",
+            "--vtcm_override=0",
+            "--overwrite_cache_records"
+          ],
+          "outputs": [
+            "models/artifacts/android-qairt/tts/int8/duration_predictor_int8.dlc",
+            "models/artifacts/android-qairt/tts/int8/text_encoder_int8.dlc",
+            "models/artifacts/android-qairt/tts/int8/vector_estimator_int8.dlc",
+            "models/artifacts/android-qairt/tts/int8/vocoder_int8.dlc",
+            "models/artifacts/android-qairt/tts/prepared/duration_predictor_sm8750.dlc",
+            "models/artifacts/android-qairt/tts/prepared/text_encoder_sm8750.dlc",
+            "models/artifacts/android-qairt/tts/prepared/vector_estimator_sm8750.dlc",
+            "models/artifacts/android-qairt/tts/prepared/vocoder_sm8750.dlc"
+          ]
+        }
+      ],
+      "onnx_components": [
+        {
+          "name": "duration_predictor",
+          "source": "models/original/tts/supertonic-3/onnx/duration_predictor.onnx",
+          "float_dlc": "models/artifacts/android-qairt/tts/float/duration_predictor.dlc",
+          "quantized_dlc": "models/artifacts/android-qairt/tts/int8/duration_predictor_int8.dlc",
+          "prepared_dlc": "models/artifacts/android-qairt/tts/prepared/duration_predictor_sm8750.dlc"
+        },
+        {
+          "name": "text_encoder",
+          "source": "models/original/tts/supertonic-3/onnx/text_encoder.onnx",
+          "float_dlc": "models/artifacts/android-qairt/tts/float/text_encoder.dlc",
+          "quantized_dlc": "models/artifacts/android-qairt/tts/int8/text_encoder_int8.dlc",
+          "prepared_dlc": "models/artifacts/android-qairt/tts/prepared/text_encoder_sm8750.dlc"
+        },
+        {
+          "name": "vector_estimator",
+          "source": "models/original/tts/supertonic-3/onnx/vector_estimator.onnx",
+          "float_dlc": "models/artifacts/android-qairt/tts/float/vector_estimator.dlc",
+          "quantized_dlc": "models/artifacts/android-qairt/tts/int8/vector_estimator_int8.dlc",
+          "prepared_dlc": "models/artifacts/android-qairt/tts/prepared/vector_estimator_sm8750.dlc"
+        },
+        {
+          "name": "vocoder",
+          "source": "models/original/tts/supertonic-3/onnx/vocoder.onnx",
+          "float_dlc": "models/artifacts/android-qairt/tts/float/vocoder.dlc",
+          "quantized_dlc": "models/artifacts/android-qairt/tts/int8/vocoder_int8.dlc",
+          "prepared_dlc": "models/artifacts/android-qairt/tts/prepared/vocoder_sm8750.dlc"
+        }
+      ],
+      "calibration_status": "random_generated_pipeline_only_representative_required"
+    }
+  ]
+}

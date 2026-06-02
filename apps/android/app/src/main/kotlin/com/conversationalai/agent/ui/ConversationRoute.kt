@@ -1,0 +1,128 @@
+package com.conversationalai.agent.ui
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.conversationalai.agent.core.ConvState
+
+@Composable
+fun ConversationRoute(
+    status: String,
+    convState: ConvState,
+    convLine: String,
+    convReply: String,
+    initOk: Boolean,
+    llmOk: Boolean,
+    asrOk: Boolean,
+    vadOk: Boolean,
+    micGranted: Boolean,
+    initialAsrLanguage: String,
+    onRequestMicPermission: () -> Unit,
+    onClearConversation: () -> Unit,
+    onSpeak: (String, (Boolean) -> Unit, (String) -> Unit) -> Unit,
+    onAskLlm: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
+    onConverse: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
+    onChangeLanguage: (String, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
+    onStartRecording: ((Boolean) -> Unit, (Boolean) -> Unit, () -> Unit, (String) -> Unit) -> Unit,
+    onStopRecording: ((Boolean) -> Unit, (Boolean) -> Unit, (String) -> Unit, (String) -> Unit) -> Unit,
+    onToggleConversation: (Boolean, (Boolean) -> Unit, () -> Unit) -> Unit,
+    onToggleBargeIn: (Boolean, (Boolean) -> Unit) -> Unit,
+    onCancelCurrentTurn: ((Boolean) -> Unit, (Boolean) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
+    onAsrTest: ((Boolean) -> Unit, (String) -> Unit) -> Unit,
+) {
+    var text by remember { mutableStateOf("\uc548\ub155\ud558\uc138\uc694. \ub9cc\ub098\uc11c \ubc18\uac11\uc2b5\ub2c8\ub2e4.") }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf(status) }
+    var llmOut by remember { mutableStateOf("") }
+    var asrLang by remember { mutableStateOf(initialAsrLanguage) }
+    var recording by remember { mutableStateOf(false) }
+    var conv by remember { mutableStateOf(false) }
+    var bargeIn by remember { mutableStateOf(false) }
+    var diagnosticsOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(status) {
+        msg = status
+    }
+
+    val loopState = SpeechLoopUiState.from(convState)
+    val uiState = ConversationUiState(
+        typedText = text,
+        busy = busy,
+        statusMessage = msg,
+        llmOutput = llmOut,
+        asrLanguage = asrLang,
+        recording = recording,
+        handsFree = conv,
+        bargeIn = bargeIn,
+        diagnosticsOpen = diagnosticsOpen,
+        loopState = loopState,
+        transcript = buildTranscriptItems(convLine, convReply, llmOut, msg, loopState),
+        runtimeReadiness = buildRuntimeReadiness(
+            ttsReady = initOk,
+            llmReady = llmOk,
+            asrReady = asrOk,
+            vadReady = vadOk,
+            micGranted = micGranted,
+        ),
+        latencySummary = LatencySummary(summaryText = convLine),
+        lastError = msg.takeIf { it.contains("failed", ignoreCase = true) || it.contains("denied", ignoreCase = true) },
+    )
+
+    ConversationScreen(state = uiState) { action ->
+        when (action) {
+            is ConversationAction.UpdateTypedText -> text = action.text
+            is ConversationAction.ChangeLanguage -> {
+                onChangeLanguage(action.language, { asrLang = it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.SubmitTypedTurn -> {
+                onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.StartHandsFree -> {
+                if (!micGranted) {
+                    onRequestMicPermission()
+                } else {
+                    onToggleConversation(false, { conv = it }, {
+                        onClearConversation()
+                        llmOut = ""
+                    })
+                }
+            }
+            ConversationAction.StopHandsFree -> {
+                onToggleConversation(true, { conv = it }, {})
+            }
+            ConversationAction.StartPushToTalk -> {
+                if (!micGranted) {
+                    onRequestMicPermission()
+                } else {
+                    onStartRecording({ recording = it }, { busy = it }, { llmOut = "" }, { msg = it })
+                }
+            }
+            ConversationAction.StopPushToTalk -> {
+                onStopRecording({ recording = it }, { busy = it }, { msg = it }, { llmOut += it })
+            }
+            ConversationAction.CancelCurrentTurn -> {
+                onCancelCurrentTurn({ recording = it }, { conv = it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.ToggleBargeIn -> {
+                onToggleBargeIn(bargeIn) { bargeIn = it }
+            }
+            ConversationAction.OpenDiagnostics -> diagnosticsOpen = true
+            ConversationAction.CloseDiagnostics -> diagnosticsOpen = false
+            ConversationAction.RunDebugSpeak -> {
+                onSpeak(text, { busy = it }, { msg = it })
+            }
+            ConversationAction.RunDebugAskLlm -> {
+                onAskLlm(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.RunDebugConverse -> {
+                onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.RunDebugAsrTest -> {
+                onAsrTest({ busy = it }, { msg = it })
+            }
+        }
+    }
+}
