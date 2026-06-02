@@ -3,7 +3,7 @@
 Status: design, pre-code. Maps the platform-neutral specs to concrete Android modules, threads,
 and runtime integrations. Specs this implements: `speech_loop_state_machine.md` (states + power),
 `latency_budget.md` (waterfall), `shared/mcp/` (event contract), `shared/config/` (typed config).
-Verified runtime facts: `docs/review/device_measurements.md`.
+Verified runtime facts: `docs/demo/sm8750_measurements.md`.
 
 ## 1. Scope of the Phase 3 vertical slice
 Offline speech-to-speech loop on SM8750: mic → ASR → prompt → LLM (Genie) → clause stream → TTS

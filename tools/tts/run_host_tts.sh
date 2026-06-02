@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host Supertonic TTS smoke at K=4,6,8. All paths stay INSIDE the project (.work/ is gitignored).
 # Copies the script to an in-project work dir before running, to survive transient editor/watcher
-# truncation of tools/tts/*.py during concurrent /mnt/d access.
+# truncation of tools/tts/*.py during concurrent access on the Windows-mounted workspace.
 set -uo pipefail
 cd "$(cd "$(dirname "$0")/../.." && pwd)"
 PY=""

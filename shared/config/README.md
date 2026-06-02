@@ -23,7 +23,7 @@ differently, but key names and meaning are equivalent and validated against this
 - `asr.endpoint_silence_ms = 350` — directly sets latency stage 1 (trade-off vs clipping).
 - `tts.flow_steps = 6` (chosen by listening; K=4 under-converged) and `tts.chunk_latent_frames =
   128` — short-chunk fp16 first-clause TTS ≈ 0.96 s at K=6 (see
-  `docs/review/device_measurements.md`).
+  `docs/demo/sm8750_measurements.md`).
 - `runtime.use_os_thermal_state = true` (primary), `thermal_elevated_c = 80` with
   `thermal_hysteresis_c = 6` — LLM steady ~70 °C, init spike ~103 °C; hysteresis prevents flapping.
 - `runtime.barge_in_stop_ms = 200` — audible playback stops mid-clause this fast.

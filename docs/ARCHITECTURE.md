@@ -32,7 +32,7 @@ App launch
 - Typed shared configuration: `shared/config/config.schema.json`.
 - First-audio latency waterfall + P50/P95 targets: `docs/design/latency_budget.md`.
 - Speech-loop state machine + power/thermal policy: `docs/design/speech_loop_state_machine.md`.
-- Device measurements + design review: `docs/review/`.
+- On-device measurements: `docs/demo/sm8750_measurements.md`.
 
 ## Offline runtime rule
 

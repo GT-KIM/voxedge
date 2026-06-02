@@ -7,7 +7,7 @@ versioned schema: [`conversation_events.schema.json`](conversation_events.schema
 
 ## Why two layers
 
-On-device measurement (see `docs/review/device_measurements.md`) showed that first-audio
+On-device measurement (see `docs/demo/sm8750_measurements.md`) showed that first-audio
 latency requires **streaming LLM output into TTS clause-by-clause** — first-clause TTS is ~0.67 s
 only because we synthesize a short clause immediately, not after a full response. Gating TTS on a
 single complete "MCP object" would add seconds of dead air. So the contract is split:
