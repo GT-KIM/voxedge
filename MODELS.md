@@ -54,7 +54,12 @@ each is governed by its own license, so they are **not redistributed here.** You
 
 All run on CPU via ONNX Runtime (no vendor NPU needed).
 
-- **Dolphin base CTC** (Korean-strong, multi East-Asian) — `k2-fsa` / `csukuangfj` on Hugging Face,
+- **Korean zipformer transducer** (`sherpa-onnx-zipformer-korean-2024-06-24`, k2-fsa GitHub
+  release `asr-models`) — the KO default since 2026-06-12: clean CER 0.008 @ ~51 ms vs Dolphin
+  base 0.136 (tools/asr/eval_live.py, labeled set + live device captures). Provision the int8
+  encoder/decoder/joiner + tokens.txt to `files/asr_zipformer_ko/`.
+- **Dolphin base CTC** (Korean-strong, multi East-Asian) — KO fallback when the zipformer is not
+  provisioned — `k2-fsa` / `csukuangfj` on Hugging Face,
   Apache-2.0 runtime; verify the model card's license.
 - **SenseVoice int8** (zh/en/ja/ko/yue) — `csukuangfj/sherpa-onnx-sense-voice-...`, Apache-2.0.
 - **Silero VAD** — `silero_vad.onnx` from the sherpa-onnx `asr-models` release.

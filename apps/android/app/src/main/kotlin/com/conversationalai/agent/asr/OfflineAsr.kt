@@ -7,21 +7,25 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
 import java.io.File
 
 /**
- * Owned offline ASR (sherpa-onnx), PER-LANGUAGE engine routing (host CER bench, 2026-05-31):
- *  - KO -> Dolphin base CTC (multi East-Asian). On real music-background KO it beat SenseVoice
- *    (CER 0.60 -> 0.30) and clean KO too (0.12 -> 0.06), at ~27-42 ms (faster). Cannot do English.
- *  - EN -> SenseVoice int8 (excellent English; Dolphin outputs nothing for English).
- * Both fully on-device (ONNX/CPU), chunked/non-streaming. The ko/en toggle selects the engine.
+ * Owned offline ASR (sherpa-onnx), PER-LANGUAGE engine routing (host CER bench, 2026-06-12,
+ * tools/asr/eval_live.py — labeled clean set + live device captures):
+ *  - KO -> Korean-specific zipformer transducer (KsponSpeech-trained): clean CER 0.008 @ ~51 ms,
+ *    17x better than the previous Dolphin base (0.136) and no foreign-script hallucinations on
+ *    the live captures. Falls back to Dolphin, then SenseVoice(ko) if not provisioned.
+ *  - EN -> SenseVoice int8 (excellent English).
+ * All fully on-device (ONNX/CPU), chunked/non-streaming. The ko/en toggle selects the engine.
  *
- * [senseVoiceDir] has model.int8.onnx + tokens.txt; [dolphinDir] (optional) likewise. If Dolphin is
- * absent, KO falls back to SenseVoice with language pinned "ko".
+ * [senseVoiceDir] has model.int8.onnx + tokens.txt; [dolphinDir]/[zipformerKoDir] (optional)
+ * hold the alternates (zipformer: encoder/decoder/joiner int8 + tokens.txt).
  */
 class OfflineAsr(
     private val senseVoiceDir: String,
     private val dolphinDir: String? = null,
+    private val zipformerKoDir: String? = null,
 ) : AsrEngine {
 
     private var recognizer: OfflineRecognizer? = null
@@ -48,9 +52,24 @@ class OfflineAsr(
     private fun build(): Boolean = try {
         recognizer?.release()
         recognizer = null
+        val zipEncoder = zipformerKoDir?.let { File("$it/encoder-epoch-99-avg-1.int8.onnx") }
+        val useZipformer = language == "ko" && zipEncoder?.exists() == true
         val dolphinModel = dolphinDir?.let { File("$it/model.int8.onnx") }
-        val useDolphin = language == "ko" && dolphinModel?.exists() == true
-        val modelConfig = if (useDolphin) {
+        val useDolphin = !useZipformer && language == "ko" && dolphinModel?.exists() == true
+        val modelConfig = if (useZipformer) {
+            backend = "zipformer-ko"
+            OfflineModelConfig(
+                transducer = OfflineTransducerModelConfig(
+                    encoder = "$zipformerKoDir/encoder-epoch-99-avg-1.int8.onnx",
+                    decoder = "$zipformerKoDir/decoder-epoch-99-avg-1.int8.onnx",
+                    joiner = "$zipformerKoDir/joiner-epoch-99-avg-1.int8.onnx",
+                ),
+                tokens = "$zipformerKoDir/tokens.txt",
+                modelType = "transducer",
+                numThreads = 2,
+                provider = "cpu",
+            )
+        } else if (useDolphin) {
             backend = "dolphin"
             OfflineModelConfig(
                 dolphin = OfflineDolphinModelConfig(model = "$dolphinDir/model.int8.onnx"),

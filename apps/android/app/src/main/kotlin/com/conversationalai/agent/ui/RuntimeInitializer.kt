@@ -55,6 +55,7 @@ class RuntimeInitializer(private val context: Context) {
         val asr = OfflineAsr(
             senseVoiceDir = File(context.filesDir, "asr").absolutePath,
             dolphinDir = File(context.filesDir, "asr_dolphin").absolutePath,
+            zipformerKoDir = File(context.filesDir, "asr_zipformer_ko").absolutePath,
         )
         val asrOk = initializeAsr(asr)
 
