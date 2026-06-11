@@ -141,6 +141,17 @@ fun SettingsSheet(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(
+                    checked = settings.confirmActions,
+                    onCheckedChange = { onAction(ConversationAction.ToggleConfirmActions) },
+                )
+                Text(
+                    "Ask before device actions (timer, alarm, flashlight)",
+                    modifier = Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
                     checked = bargeIn,
                     onCheckedChange = { onAction(ConversationAction.ToggleBargeIn) },
                 )

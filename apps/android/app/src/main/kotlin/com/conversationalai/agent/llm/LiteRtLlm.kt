@@ -39,6 +39,7 @@ class LiteRtLlm : LlmEngine {
     private var systemPrompt: String = ""
     private var sampling: LlmSampling = LlmSampling()
     private var modelName: String = "litert-lm(uninit)"
+    private var toolRegistry: com.conversationalai.agent.core.tools.ToolRegistry? = null
 
     /** Load the .litertlm bundle once (resident). [cacheDir] speeds up subsequent loads.
      *  Tries the GPU backend first (the broadly-working fast path), then falls back to CPU so a
@@ -143,6 +144,16 @@ class LiteRtLlm : LlmEngine {
 
     override fun chatTemplateId(): String = "raw"
 
+    /** NATIVE function calling: the LiteRT-LM runtime formats/parses tool calls itself
+     *  (automaticToolCalling) and invokes our registry via LiteRtToolAdapter. */
+    override val handlesToolsNatively: Boolean get() = toolRegistry != null
+
+    override fun setToolRegistry(registry: com.conversationalai.agent.core.tools.ToolRegistry?) {
+        if (toolRegistry === registry) return
+        toolRegistry = registry
+        resetSession()   // tools are fixed per Conversation; recreate to apply
+    }
+
     override fun release() {
         resetSession()
         runCatching { engine?.close() }
@@ -151,6 +162,7 @@ class LiteRtLlm : LlmEngine {
 
     private fun createConversation(): Conversation? {
         val e = engine ?: return null
+        val registry = toolRegistry
         return runCatching {
             e.createConversation(
                 ConversationConfig(
@@ -160,6 +172,8 @@ class LiteRtLlm : LlmEngine {
                         topP = sampling.topP.toDouble(),
                         temperature = sampling.temp.toDouble(),
                     ),
+                    tools = registry?.let { LiteRtToolAdapter.providers(it) } ?: emptyList(),
+                    automaticToolCalling = true,
                 ),
             )
         }.getOrElse { ex ->

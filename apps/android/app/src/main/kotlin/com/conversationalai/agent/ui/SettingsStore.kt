@@ -21,6 +21,7 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
         maxResponseTokens = if (prefs.contains(KEY_MAX_TOKENS)) prefs.getInt(KEY_MAX_TOKENS, 0) else null,
         bargeIn = prefs.getBoolean(KEY_BARGE_IN, false),
         toolsEnabled = prefs.getBoolean(KEY_TOOLS_ENABLED, true),
+        confirmActions = prefs.getBoolean(KEY_CONFIRM_ACTIONS, false),
     )
 
     override fun save(settings: AppSettings) {
@@ -34,6 +35,7 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
             else remove(KEY_MAX_TOKENS)
             putBoolean(KEY_BARGE_IN, settings.bargeIn)
             putBoolean(KEY_TOOLS_ENABLED, settings.toolsEnabled)
+            putBoolean(KEY_CONFIRM_ACTIONS, settings.confirmActions)
         }.apply()
     }
 
@@ -46,5 +48,6 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
         const val KEY_MAX_TOKENS = "llm_max_response_tokens"
         const val KEY_BARGE_IN = "barge_in"
         const val KEY_TOOLS_ENABLED = "tools_enabled"
+        const val KEY_CONFIRM_ACTIONS = "confirm_actions"
     }
 }

@@ -124,6 +124,18 @@ destructive/outward actions; multi-call steps.
 - **Tool-call corrective retry**: a malformed/unterminated `[TOOL_CALL]` block (small-model
   failure mode) triggers ONE corrective `<tool_response>` instructing valid JSON or a plain
   answer (`tool.malformed_retry` event) instead of silently dropping the attempt.
+- **NATIVE function calling for LiteRT-LM (device-verified 2026-06-11)**: `LiteRtToolAdapter`
+  bridges the ToolRegistry into the runtime's `OpenApiTool`/`ToolProvider` API with
+  `automaticToolCalling` — the engine formats/parses calls in the model's trained format, so
+  engines with `handlesToolsNatively` skip the prompt-convention module and the `[TOOL_CALL]`
+  filter loop entirely. Result: Gemma 4 E2B, which misread tool output under the prompt
+  convention, answered "It is five thirty-seven in the afternoon" — correct, natural, 6 s total.
+- **Confirmation policy for side-effecting tools (device-verified 2026-06-11)**: `ToolSpec.sideEffect`
+  (timer/alarm/flashlight) + a turn-aware gate in `ToolRegistry.dispatch` shared by BOTH tool
+  paths: the first call is deferred with "CONFIRMATION REQUIRED — ask the user"; a re-call on the
+  NEXT turn (after the user confirmed) executes; pendings expire if not re-called. Settings
+  toggle "Ask before device actions" (default off). Verified flow: "set a timer for 2 minutes" →
+  gated, model asks → "yes please do it" → executed, real timer in the clock app.
 - **Rolling summary — device-verified (2026-06-11)**: a 23-turn conversation crossed 81 %
   occupancy → `session.summary` (ok, 403 chars, ~6 s on the warm session) → re-prefill with
   history trimmed 6→2 + summary in the system prompt → occupancy collapsed to 27 % and the next

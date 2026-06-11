@@ -81,6 +81,14 @@ interface LlmEngine {
      *  next (re)created. Template-driven engines receive the system prompt inline and ignore this. */
     fun setSystemPrompt(systemPrompt: String) {}
 
+    /** True when the engine executes tools itself (native function calling). The caller then
+     *  skips the prompt-convention tool module and the [TOOL_CALL] filter loop entirely. */
+    val handlesToolsNatively: Boolean get() = false
+
+    /** Hand the tool registry to engines with native function calling; null disables tools.
+     *  No-op for engines that rely on the prompt-convention loop. */
+    fun setToolRegistry(registry: com.conversationalai.agent.core.tools.ToolRegistry?) {}
+
     /** Free engine resources. Safe to call more than once. */
     fun release() {}
 

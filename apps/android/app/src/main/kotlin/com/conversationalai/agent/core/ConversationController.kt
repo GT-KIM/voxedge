@@ -74,8 +74,15 @@ class ConversationController(
     fun setToolsEnabled(enabled: Boolean) {
         if (toolsEnabled == enabled) return
         toolsEnabled = enabled
+        llm.setToolRegistry(if (enabled) tools else null)   // native-function-calling engines
         llm.resetSession()
         sessionLang = null
+    }
+
+    /** Confirmation policy for side-effecting tools (settings). Lives on the registry so the
+     *  prompt-convention loop and engine-native tool calls share the same gate. */
+    fun setConfirmActions(enabled: Boolean) {
+        tools?.confirmSideEffects = enabled
     }
 
     private val history = ArrayDeque<PromptAssembler.Turn>()   // recent turns for multi-turn context
@@ -107,6 +114,11 @@ class ConversationController(
         eventLogger = eventLogger,
         tools = tools,
     )
+
+    init {
+        // Engines with native function calling receive the registry up front (no-op otherwise).
+        if (tools != null) llm.setToolRegistry(tools)
+    }
 
     val isRunning: Boolean get() = running
     private val state: ConvState get() = stateMachine.current
@@ -250,6 +262,7 @@ class ConversationController(
                 "asr_ms" to asrMs,
             ),
         )
+        tools?.beginTurn(gid)   // advances the side-effect confirmation gate
         // Session-wise prompting: continue the warm KV session with just the new turn, or reset
         // and re-prefill the recent transcript (first turn, language switch, post-abort, or the
         // context window filling up — re-prefill is also how old turns get evicted from KV).
@@ -263,8 +276,11 @@ class ConversationController(
             turnLang = turnLang,
         )
         val template = ChatTemplate.fromId(llm.chatTemplateId())
-        // Advertise tools only when the agentic loop can actually run (warm-session continuation).
-        val toolSpecs = if (toolsEnabled && tools != null && !tools.isEmpty && llm.sessionCapable) {
+        // Advertise tools in the system prompt only for the prompt-convention loop; engines with
+        // native function calling declare them through the runtime instead.
+        val toolSpecs = if (toolsEnabled && tools != null && !tools.isEmpty &&
+            llm.sessionCapable && !llm.handlesToolsNatively
+        ) {
             tools.specs
         } else {
             emptyList()

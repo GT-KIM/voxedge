@@ -91,6 +91,7 @@ data class SettingsUiState(
     val maxResponseTokens: Int = 120,
     val samplingOverridden: Boolean = false,
     val toolsEnabled: Boolean = true,
+    val confirmActions: Boolean = false,
     val restartRequired: Boolean = false,
 )
 

@@ -142,6 +142,39 @@ class SpeechTurnRunnerToolTest {
     }
 
     @Test
+    fun nativeToolEngineSkipsThePromptConventionLoop() = runBlocking {
+        // An engine with native function calling emits plain text (the runtime ran the tool
+        // internally); the filter loop must stay out of the way.
+        val llm = object : LlmEngine {
+            val prompts = mutableListOf<String>()
+            override fun name() = "native-tools-llm"
+            override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+                prompts += prompt
+                onToken("It is three in the afternoon.")
+                return LlmEngine.Result.OK
+            }
+            override fun abort() = Unit
+            override val sessionCapable: Boolean get() = true
+            override fun sessionWarm() = true
+            override val handlesToolsNatively: Boolean get() = true
+        }
+        val clock = FakeClockTool()
+        val epoch = GenerationEpoch()
+
+        val record = runner(llm, ToolRegistry(listOf(clock)), RecordingInputBuilder(), epoch).run(
+            gid = epoch.next(),
+            prompt = "what time is it",
+            userText = "what time is it",
+            asrMs = 0L,
+            onDelta = {},
+        )
+
+        assertEquals(1, llm.prompts.size)            // single step, no [TOOL_CALL] loop
+        assertEquals(0, clock.calls)                 // OUR dispatch wasn't used (engine-internal)
+        assertEquals("It is three in the afternoon.", record.replyText)
+    }
+
+    @Test
     fun sessionIncapableEngineSkipsTheToolLoop() = runBlocking {
         val llm = PlainLlm("plain answer.")
         val clock = FakeClockTool()

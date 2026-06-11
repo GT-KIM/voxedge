@@ -17,6 +17,8 @@ data class AppSettings(
     val maxResponseTokens: Int? = null,
     val bargeIn: Boolean = false,
     val toolsEnabled: Boolean = true,
+    /** Side-effecting tools (timer/alarm/flashlight) require a spoken user confirmation. */
+    val confirmActions: Boolean = false,
 ) {
     val hasSamplingOverride: Boolean get() = temp != null || topK != null || topP != null
 

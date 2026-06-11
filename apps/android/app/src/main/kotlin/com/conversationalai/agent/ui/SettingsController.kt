@@ -25,6 +25,7 @@ class SettingsController(
     fun applyStartupSettings() {
         controller.bargeInEnabled = settings.bargeIn
         controller.setToolsEnabled(settings.toolsEnabled)
+        controller.setConfirmActions(settings.confirmActions)
     }
 
     fun uiState(): SettingsUiState {
@@ -47,6 +48,7 @@ class SettingsController(
             maxResponseTokens = settings.maxResponseTokens ?: LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS,
             samplingOverridden = settings.hasSamplingOverride,
             toolsEnabled = settings.toolsEnabled,
+            confirmActions = settings.confirmActions,
             restartRequired = selectedId != activeModel.id,
         )
     }
@@ -82,6 +84,12 @@ class SettingsController(
     fun toggleTools(): SettingsUiState {
         update(settings.copy(toolsEnabled = !settings.toolsEnabled))
         controller.setToolsEnabled(settings.toolsEnabled)
+        return uiState()
+    }
+
+    fun toggleConfirmActions(): SettingsUiState {
+        update(settings.copy(confirmActions = !settings.confirmActions))
+        controller.setConfirmActions(settings.confirmActions)
         return uiState()
     }
 

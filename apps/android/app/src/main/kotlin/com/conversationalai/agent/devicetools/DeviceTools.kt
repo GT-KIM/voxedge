@@ -54,6 +54,7 @@ object DeviceTools {
         override val spec = ToolSpec(
             name = "set_timer",
             description = "start a countdown timer in the system clock app",
+            sideEffect = true,
             params = listOf(
                 ToolParam("minutes", "duration in minutes (integer)"),
                 ToolParam("label", "what the timer is for", required = false),
@@ -77,6 +78,7 @@ object DeviceTools {
         override val spec = ToolSpec(
             name = "set_alarm",
             description = "set an alarm in the system clock app",
+            sideEffect = true,
             params = listOf(
                 ToolParam("hour", "hour 0-23"),
                 ToolParam("minute", "minute 0-59"),
@@ -129,6 +131,7 @@ object DeviceTools {
         override val spec = ToolSpec(
             name = "flashlight",
             description = "turn the phone flashlight on or off",
+            sideEffect = true,
             params = listOf(ToolParam("state", "'on' or 'off'")),
         )
         override fun execute(args: Map<String, String>): ToolResult {

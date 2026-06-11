@@ -20,6 +20,7 @@ enum ConversationAction: Equatable {
     case setMaxResponseTokens(Int)
     case resetSampling
     case toggleTools
+    case toggleConfirmActions
     case runDebugSpeak
     case runDebugAskLlm
     case runDebugConverse

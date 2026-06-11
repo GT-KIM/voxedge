@@ -162,8 +162,10 @@ class SpeechTurnRunner(
             onDelta(text)
             seg.accept(text)
         }
-        // The agentic loop needs a warm session to append tool responses incrementally.
-        val toolLoop = useTools && tools != null && !tools.isEmpty && llm.sessionCapable
+        // The agentic loop needs a warm session to append tool responses incrementally. Engines
+        // with NATIVE function calling run tools inside generate(); the filter loop stays out.
+        val toolLoop = useTools && tools != null && !tools.isEmpty &&
+            llm.sessionCapable && !llm.handlesToolsNatively
         val llmResult = withContext(Dispatchers.Default) {
             var stepPrompt = prompt
             var step = 0
