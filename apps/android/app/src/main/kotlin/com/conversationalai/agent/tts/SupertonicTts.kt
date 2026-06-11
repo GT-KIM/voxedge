@@ -29,6 +29,7 @@ class SupertonicTts : TtsEngine {
         noisyLatent: FloatArray,
         latentMask: FloatArray,
         k: Int,
+        speed: Float,
     ): FloatArray?
     private external fun nativeRelease(handle: Long)
 
@@ -47,7 +48,7 @@ class SupertonicTts : TtsEngine {
         check(handle != 0L) { "SupertonicTts not initialized" }
         return nativeSynthesize(
             handle, inputs.textIds, inputs.textMask, inputs.styleTtl,
-            inputs.styleDp, inputs.noisyLatent, inputs.latentMask, k,
+            inputs.styleDp, inputs.noisyLatent, inputs.latentMask, k, inputs.speed,
         )
     }
 

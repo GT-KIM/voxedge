@@ -17,6 +17,7 @@ class SettingsController(
     private val llm: LlmEngine,
     private val controller: ConversationController,
     private val isProvisioned: (LlmModelSpec) -> Boolean,
+    private val inputBuilder: com.conversationalai.agent.tts.ClauseInputBuilder? = null,
 ) {
     private var settings: AppSettings = store.load()
 
@@ -27,6 +28,9 @@ class SettingsController(
         controller.setToolsEnabled(settings.toolsEnabled)
         controller.setConfirmActions(settings.confirmActions)
         controller.speculativeEnabled = settings.speculativeTurns
+        controller.ttsFlowSteps = settings.ttsFlowSteps ?: 6
+        settings.ttsSpeed?.let { inputBuilder?.setSpeed(it) }
+        settings.ttsVoice?.let { inputBuilder?.setVoice(it) }
     }
 
     fun uiState(): SettingsUiState {
@@ -51,6 +55,11 @@ class SettingsController(
             toolsEnabled = settings.toolsEnabled,
             confirmActions = settings.confirmActions,
             speculativeTurns = settings.speculativeTurns,
+            ttsFlowSteps = settings.ttsFlowSteps ?: 6,
+            ttsSpeed = settings.ttsSpeed ?: 1.05f,
+            voices = inputBuilder?.availableVoices() ?: emptyList(),
+            activeVoice = settings.ttsVoice
+                ?: (inputBuilder as? com.conversationalai.agent.tts.TtsInputBuilder)?.voice ?: "F1",
             restartRequired = selectedId != activeModel.id,
         )
     }
@@ -98,6 +107,28 @@ class SettingsController(
     fun toggleSpeculative(): SettingsUiState {
         update(settings.copy(speculativeTurns = !settings.speculativeTurns))
         controller.speculativeEnabled = settings.speculativeTurns
+        return uiState()
+    }
+
+    /** TTS knobs apply live: K on the next clause, speed/voice via the input builder.
+     *  K floor is 5: at K=4 the shortened synth interval contends with the LLM on the HTP and
+     *  SNPE executes start failing ("te exec failed", observed on-device 2026-06-12). */
+    fun setTtsFlowSteps(k: Int): SettingsUiState {
+        update(settings.copy(ttsFlowSteps = k.coerceIn(5, 8)))
+        controller.ttsFlowSteps = settings.ttsFlowSteps ?: 6
+        return uiState()
+    }
+
+    fun setTtsSpeed(speed: Float): SettingsUiState {
+        update(settings.copy(ttsSpeed = speed.coerceIn(0.8f, 1.4f)))
+        inputBuilder?.setSpeed(settings.ttsSpeed ?: 1.05f)
+        return uiState()
+    }
+
+    fun selectVoice(name: String): SettingsUiState {
+        if (inputBuilder?.setVoice(name) == true) {
+            update(settings.copy(ttsVoice = name))
+        }
         return uiState()
     }
 

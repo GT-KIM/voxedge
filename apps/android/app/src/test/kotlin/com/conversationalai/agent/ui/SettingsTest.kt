@@ -160,6 +160,53 @@ class SettingsControllerTest {
         assertEquals(200, store.stored.maxResponseTokens)
     }
 
+    private class FakeBuilder : com.conversationalai.agent.tts.ClauseInputBuilder {
+        var lastSpeed = 1.05f
+        var lastVoice = "F1"
+        override fun build(text: String, lang: String, seed: Long) =
+            com.conversationalai.agent.tts.TtsInputs(
+                textIds = intArrayOf(0), textMask = floatArrayOf(1f), styleTtl = floatArrayOf(),
+                styleDp = floatArrayOf(), noisyLatent = floatArrayOf(), latentMask = floatArrayOf(),
+            )
+        override fun setSpeed(speed: Float) { lastSpeed = speed }
+        override fun setVoice(name: String): Boolean {
+            if (name == "BAD") return false
+            lastVoice = name; return true
+        }
+        override fun availableVoices() = listOf("F1", "M1")
+    }
+
+    @Test
+    fun ttsSettingsApplyLiveAndPersist() {
+        val store = MemoryStore()
+        val llm = FakeLlm()
+        val builder = FakeBuilder()
+        val conv = conversationController(llm)
+        val c = SettingsController(
+            store = store, activeModel = LlmCatalog.QWEN3_4B_GENIE, llm = llm,
+            controller = conv, isProvisioned = { true }, inputBuilder = builder,
+        )
+
+        val k = c.setTtsFlowSteps(5)
+        assertEquals(5, k.ttsFlowSteps)
+        assertEquals(5, conv.ttsFlowSteps)
+        assertEquals(5, store.stored.ttsFlowSteps)
+        // K floor: 4 destabilizes the HTP alongside the LLM (device finding) -> clamped to 5.
+        assertEquals(5, c.setTtsFlowSteps(4).ttsFlowSteps)
+
+        val sp = c.setTtsSpeed(1.2f)
+        assertEquals(1.2f, sp.ttsSpeed)
+        assertEquals(1.2f, builder.lastSpeed)
+
+        val v = c.selectVoice("M1")
+        assertEquals("M1", v.activeVoice)
+        assertEquals("M1", builder.lastVoice)
+        assertEquals(listOf("F1", "M1"), v.voices)
+        // Unknown voice: not persisted, builder unchanged.
+        val bad = c.selectVoice("BAD")
+        assertEquals("M1", bad.activeVoice)
+    }
+
     @Test
     fun togglingToolsPersistsAndResetsTheSession() {
         val store = MemoryStore()

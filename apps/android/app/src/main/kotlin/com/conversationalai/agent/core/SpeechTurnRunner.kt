@@ -34,6 +34,8 @@ class SpeechTurnRunner(
     private val onSpeakingStarted: () -> Unit,
     private val eventLogger: RuntimeEventLogger? = null,
     private val tools: ToolRegistry? = null,
+    // TTS flow-matching steps per clause (settings; quality/latency knob: K=4 fast, K=6 default).
+    private val flowSteps: () -> Int = { 6 },
 ) {
     suspend fun run(
         gid: Long,
@@ -73,8 +75,11 @@ class SpeechTurnRunner(
                 for (chunk in clauses) {
                     if (!generationEpoch.isCurrent(gid)) break
                     val synthStart = System.nanoTime()
+                    // A null return is a native synthesis failure (engine exec error) — log it
+                    // like a thrown error instead of skipping silently.
                     val pcm = runCatching {
-                        tts.synthesizeClause(inputBuilder.build(chunk.text, lang = chunk.language), k = 6)
+                        tts.synthesizeClause(inputBuilder.build(chunk.text, lang = chunk.language), k = flowSteps())
+                            ?: throw IllegalStateException("native synthesis returned null")
                     }.getOrElse { e ->
                         Log.w(TAG, "clause dropped (${e.message}): \"${chunk.text}\"")
                         eventLogger?.log(

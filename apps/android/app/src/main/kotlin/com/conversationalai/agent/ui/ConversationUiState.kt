@@ -97,6 +97,10 @@ data class SettingsUiState(
     val toolsEnabled: Boolean = true,
     val confirmActions: Boolean = false,
     val speculativeTurns: Boolean = true,
+    val ttsFlowSteps: Int = 6,
+    val ttsSpeed: Float = 1.05f,
+    val voices: List<String> = emptyList(),
+    val activeVoice: String = "F1",
     val restartRequired: Boolean = false,
 )
 

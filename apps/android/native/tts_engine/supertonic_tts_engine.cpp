@@ -325,13 +325,14 @@ Java_com_conversationalai_agent_tts_SupertonicTts_nativeInit(JNIEnv* env, jobjec
   return reinterpret_cast<jlong>(e);
 }
 
-// nativeSynthesize: one clause. All float arrays in DLC layout; textIds int32.
+// nativeSynthesize: one clause. All float arrays in DLC layout; textIds int32. speed scales the
+// duration-predictor output (helper.py used a fixed 1.05; >1 = faster speech, shorter audio).
 // Returns float[] PCM (44.1 kHz mono), or null on failure.
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_conversationalai_agent_tts_SupertonicTts_nativeSynthesize(
     JNIEnv* env, jobject, jlong handle,
     jintArray jTextIds, jfloatArray jTextMask, jfloatArray jStyleTtl, jfloatArray jStyleDp,
-    jfloatArray jNoisy, jfloatArray jLatentMask, jint K) {
+    jfloatArray jNoisy, jfloatArray jLatentMask, jint K, jfloat speed) {
   auto* e = reinterpret_cast<Engine*>(handle);
   if (!e || !e->ok) return nullptr;
 
@@ -376,9 +377,10 @@ Java_com_conversationalai_agent_tts_SupertonicTts_nativeSynthesize(
     setFloat(e->dpIn, "text_mask", textMask.data(), textMask.size());
     if (e->dp.snpe->execute(e->dpInM, e->dpOutM)) {
       const float* dur = reinterpret_cast<const float*>(e->dpOut.at(e->dpOutName).bytes.data());
-      // helper.py: speed=1.05; latent_len = ceil(duration/speed * sr / (base_chunk*ccf))
-      //            = ceil(duration/1.05 * 44100 / 3072)
-      float seconds = dur[0] / 1.05f;
+      // helper.py: latent_len = ceil(duration/speed * sr / (base_chunk*ccf)); speed comes from
+      // settings (1.05 = the original fixed value).
+      float spd = (speed > 0.1f && speed < 4.0f) ? speed : 1.05f;
+      float seconds = dur[0] / spd;
       int frames = (int)std::ceil(seconds * 44100.0f / 3072.0f);
       if (frames < 1) frames = 1;
       if (frames > LAT) frames = LAT;

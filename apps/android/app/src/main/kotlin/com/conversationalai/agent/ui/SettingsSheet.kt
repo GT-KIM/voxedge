@@ -126,6 +126,44 @@ fun SettingsSheet(
                 valueRange = 40f..400f,
             )
 
+            // --- Speech (TTS) ---
+            Text("Speech", style = MaterialTheme.typography.titleSmall)
+            var ttsK by remember(settings.ttsFlowSteps) { mutableIntStateOf(settings.ttsFlowSteps) }
+            Text(
+                "voice quality steps: $ttsK (lower = faster, 6 = default)",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = ttsK.toFloat(),
+                onValueChange = { ttsK = it.toInt().coerceIn(5, 8) },
+                onValueChangeFinished = { onAction(ConversationAction.SetTtsFlowSteps(ttsK)) },
+                valueRange = 5f..8f,
+                steps = 2,
+            )
+            var ttsSpeed by remember(settings.ttsSpeed) { mutableFloatStateOf(settings.ttsSpeed) }
+            Text(
+                "speech speed: ${"%.2f".format(ttsSpeed)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = ttsSpeed,
+                onValueChange = { ttsSpeed = it },
+                onValueChangeFinished = { onAction(ConversationAction.SetTtsSpeed(ttsSpeed)) },
+                valueRange = 0.8f..1.4f,
+            )
+            if (settings.voices.isNotEmpty()) {
+                Text("voice", style = MaterialTheme.typography.bodySmall)
+                settings.voices.forEach { v ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = v == settings.activeVoice,
+                            onClick = { onAction(ConversationAction.SelectVoice(v)) },
+                        )
+                        Text(v, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+
             // --- Conversation ---
             Text("Conversation", style = MaterialTheme.typography.titleSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {

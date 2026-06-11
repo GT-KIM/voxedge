@@ -31,6 +31,9 @@ sealed interface ConversationAction {
     data object ToggleTools : ConversationAction
     data object ToggleConfirmActions : ConversationAction
     data object ToggleSpeculative : ConversationAction
+    data class SetTtsFlowSteps(val k: Int) : ConversationAction
+    data class SetTtsSpeed(val speed: Float) : ConversationAction
+    data class SelectVoice(val voice: String) : ConversationAction
 
     data object RunDebugSpeak : ConversationAction
     data object RunDebugAskLlm : ConversationAction

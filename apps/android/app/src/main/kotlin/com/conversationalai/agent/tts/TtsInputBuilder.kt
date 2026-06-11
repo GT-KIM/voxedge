@@ -17,9 +17,13 @@ import kotlin.random.Random
  */
 class TtsInputBuilder(context: Context, voice: String = "F1") : ClauseInputBuilder {
 
+    private val appContext = context.applicationContext
     private val indexer: IntArray
-    private val styleTtlOnnx: FloatArray  // [50,256] row-major (ONNX order)
-    private val styleDp: FloatArray       // [8,16]
+    @Volatile private var styleTtlOnnx: FloatArray  // [50,256] row-major (ONNX order)
+    @Volatile private var styleDp: FloatArray       // [8,16]
+    @Volatile private var speed: Float = 1.05f      // duration-predictor rate (settings)
+    @Volatile var voice: String = voice
+        private set
 
     init {
         val am = context.assets
@@ -29,6 +33,27 @@ class TtsInputBuilder(context: Context, voice: String = "F1") : ClauseInputBuild
         styleTtlOnnx = readData(v.getJSONObject("style_ttl"))   // 50*256
         styleDp = readData(v.getJSONObject("style_dp"))         // 8*16
     }
+
+    override fun setSpeed(speed: Float) {
+        this.speed = speed.coerceIn(0.5f, 2.0f)
+    }
+
+    /** Swap the speaker style embeddings (assets/tts/<name>.json); applies to the next clause. */
+    override fun setVoice(name: String): Boolean = runCatching {
+        val v = appContext.assets.open("tts/$name.json").bufferedReader()
+            .use { JSONObject(it.readText()) }
+        styleTtlOnnx = readData(v.getJSONObject("style_ttl"))
+        styleDp = readData(v.getJSONObject("style_dp"))
+        voice = name
+        true
+    }.getOrDefault(false)
+
+    /** Voice JSONs bundled under assets/tts (everything except the unicode indexer). */
+    override fun availableVoices(): List<String> =
+        (appContext.assets.list("tts") ?: emptyArray())
+            .filter { it.endsWith(".json") && it != "unicode_indexer.json" }
+            .map { it.removeSuffix(".json") }
+            .sorted()
 
     /** Build inputs for one short clause (<= T tokens after framing). */
     override fun build(text: String, lang: String, seed: Long): TtsInputs {
@@ -65,6 +90,7 @@ class TtsInputBuilder(context: Context, voice: String = "F1") : ClauseInputBuild
             styleDp = styleDpDlc,
             noisyLatent = noisy,
             latentMask = latentMask,
+            speed = speed,
         )
     }
 

@@ -192,6 +192,7 @@ class MainActivity : ComponentActivity() {
             llm = llm,
             controller = controller,
             isProvisioned = { spec -> LlmCatalog.isProvisioned(filesDir, spec) },
+            inputBuilder = inputBuilder,
         )
         settingsController.applyStartupSettings()
         initialBargeIn = store.load().bargeIn

@@ -21,6 +21,10 @@ data class AppSettings(
     val confirmActions: Boolean = false,
     /** Start turns speculatively at the early silence checkpoint (playback/tools gated). */
     val speculativeTurns: Boolean = true,
+    /** TTS knobs (config schema tts.*): null = defaults (K=6, speed 1.05, builder's voice). */
+    val ttsFlowSteps: Int? = null,
+    val ttsSpeed: Float? = null,
+    val ttsVoice: String? = null,
 ) {
     val hasSamplingOverride: Boolean get() = temp != null || topK != null || topP != null
 

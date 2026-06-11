@@ -27,6 +27,9 @@ enum ConversationAction: Equatable {
     case toggleTools
     case toggleConfirmActions
     case toggleSpeculative
+    case setTtsFlowSteps(Int)
+    case setTtsSpeed(Double)
+    case selectVoice(String)
     case runDebugSpeak
     case runDebugAskLlm
     case runDebugConverse

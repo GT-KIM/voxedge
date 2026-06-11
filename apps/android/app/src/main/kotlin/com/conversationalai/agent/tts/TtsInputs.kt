@@ -17,4 +17,7 @@ data class TtsInputs(
     val styleDp: FloatArray,
     val noisyLatent: FloatArray,
     val latentMask: FloatArray,
+    /** Speech-rate divisor for the duration predictor (1.05 = Supertonic's original fixed value;
+     *  higher = faster speech). Carried with the inputs so settings apply per clause. */
+    val speed: Float = 1.05f,
 )

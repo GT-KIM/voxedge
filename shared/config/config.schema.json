@@ -80,7 +80,7 @@
         "voice": { "type": "string", "default": "F1" },
         "model_dir": { "type": "string", "description": "Directory of graph-prepared component DLCs/CoreML models." },
         "precision": { "type": "string", "enum": ["fp16", "int8"], "default": "fp16" },
-        "flow_steps": { "type": "integer", "default": 6, "description": "K: flow-matching steps; dominant TTS latency knob. K=6 chosen by listening (K=4 under-converged, K=6 matches K=8). Supertonic default 8, range 5-12." },
+        "flow_steps": { "type": "integer", "default": 6, "description": "K: flow-matching steps; dominant TTS latency knob. K=6 chosen by listening (K=4 under-converged, K=6 matches K=8). Supertonic default 8, range 5-12. Runtime-adjustable 4-8 via the settings sheet since 2026-06-12." },
         "chunk_latent_frames": { "type": "integer", "default": 128, "description": "Short-chunk latent length (~1.5s) for low first-audio latency." },
         "speed": { "type": "number", "default": 1.0 }
       }

@@ -126,6 +126,18 @@ fun ConversationRoute(
             ConversationAction.ToggleSpeculative -> {
                 settings = settingsController.toggleSpeculative()
             }
+            is ConversationAction.SetTtsFlowSteps -> {
+                settings = settingsController.setTtsFlowSteps(action.k)
+                msg = "TTS flow steps: ${action.k}"
+            }
+            is ConversationAction.SetTtsSpeed -> {
+                settings = settingsController.setTtsSpeed(action.speed)
+                msg = "speech speed: %.2f".format(action.speed)
+            }
+            is ConversationAction.SelectVoice -> {
+                settings = settingsController.selectVoice(action.voice)
+                msg = "voice: ${action.voice}"
+            }
             ConversationAction.SubmitTypedTurn -> {
                 onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
             }

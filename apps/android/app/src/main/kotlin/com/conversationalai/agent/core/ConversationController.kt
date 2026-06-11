@@ -73,6 +73,10 @@ class ConversationController(
     @Volatile var toolsEnabled = true
         private set
 
+    /** TTS flow-matching steps per clause (settings): K=6 default (listening-matched to K=8),
+     *  K=4 trades some quality for ~70 ms less per-clause synthesis. */
+    @Volatile var ttsFlowSteps = 6
+
     /** SPECULATIVE turns (settings): at the mic's early silence checkpoint (~250 ms) the turn
      *  starts immediately — ASR, LLM prefill/decode, even TTS synthesis — while audible playback
      *  and tool execution stay gated. When the real endpoint (~600 ms) confirms the same
@@ -165,6 +169,7 @@ class ConversationController(
         onSpeakingStarted = { speakingSinceNs = System.nanoTime() },
         eventLogger = eventLogger,
         tools = tools,
+        flowSteps = { ttsFlowSteps },
     )
 
     init {

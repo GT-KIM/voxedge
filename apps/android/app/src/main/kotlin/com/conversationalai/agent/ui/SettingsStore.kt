@@ -23,6 +23,9 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
         toolsEnabled = prefs.getBoolean(KEY_TOOLS_ENABLED, true),
         confirmActions = prefs.getBoolean(KEY_CONFIRM_ACTIONS, false),
         speculativeTurns = prefs.getBoolean(KEY_SPECULATIVE, true),
+        ttsFlowSteps = if (prefs.contains(KEY_TTS_K)) prefs.getInt(KEY_TTS_K, 0) else null,
+        ttsSpeed = if (prefs.contains(KEY_TTS_SPEED)) prefs.getFloat(KEY_TTS_SPEED, 0f) else null,
+        ttsVoice = prefs.getString(KEY_TTS_VOICE, null),
     )
 
     override fun save(settings: AppSettings) {
@@ -38,6 +41,12 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
             putBoolean(KEY_TOOLS_ENABLED, settings.toolsEnabled)
             putBoolean(KEY_CONFIRM_ACTIONS, settings.confirmActions)
             putBoolean(KEY_SPECULATIVE, settings.speculativeTurns)
+            if (settings.ttsFlowSteps != null) putInt(KEY_TTS_K, settings.ttsFlowSteps)
+            else remove(KEY_TTS_K)
+            if (settings.ttsSpeed != null) putFloat(KEY_TTS_SPEED, settings.ttsSpeed)
+            else remove(KEY_TTS_SPEED)
+            if (settings.ttsVoice != null) putString(KEY_TTS_VOICE, settings.ttsVoice)
+            else remove(KEY_TTS_VOICE)
         }.apply()
     }
 
@@ -52,5 +61,8 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
         const val KEY_TOOLS_ENABLED = "tools_enabled"
         const val KEY_CONFIRM_ACTIONS = "confirm_actions"
         const val KEY_SPECULATIVE = "speculative_turns"
+        const val KEY_TTS_K = "tts_flow_steps"
+        const val KEY_TTS_SPEED = "tts_speed"
+        const val KEY_TTS_VOICE = "tts_voice"
     }
 }
