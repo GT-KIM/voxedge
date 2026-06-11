@@ -8,6 +8,7 @@ enum ConversationAction: Equatable {
     case openSessions
     case closeSessions
     case selectSession(String)
+    case deleteSession(String)
     case startHandsFree
     case stopHandsFree
     case startPushToTalk

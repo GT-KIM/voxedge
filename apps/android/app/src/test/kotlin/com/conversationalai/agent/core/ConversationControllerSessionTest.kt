@@ -133,6 +133,22 @@ class ConversationControllerSessionTest {
     }
 
     @Test
+    fun restoreHistoryWithSummarySeedsContextAndSystemPrompt() = runBlocking {
+        val llm = FakeSessionLlm()
+        val controller = controller(llm)
+
+        controller.restoreHistory(
+            turns = listOf(PromptAssembler.Turn("earlier question", "earlier answer")),
+            summary = "the user is planning a hiking trip",
+        )
+        controller.runTurn("so what should I pack?") {}
+
+        val prompt = llm.prompts.last()
+        assertTrue(prompt.contains("Summary of the conversation so far: the user is planning a hiking trip"))
+        assertTrue(prompt.contains("<|im_start|>user\nearlier question<|im_end|>\n"))
+    }
+
+    @Test
     fun sessionUnawareEngineAlwaysGetsTheFullPrompt() = runBlocking {
         val llm = FakePlainLlm()
         val controller = controller(llm)

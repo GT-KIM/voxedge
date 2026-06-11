@@ -102,12 +102,20 @@ class ConversationController(
     }
 
     /** Switch to a persisted session: like [resetConversation] but seeds the transcript history
-     *  with [turns] (most recent kept), so the next turn re-prefills with the restored context. */
-    fun restoreHistory(turns: List<PromptAssembler.Turn>) {
+     *  with [turns] (most recent kept) and the session's rolling [summary], so the next turn
+     *  re-prefills with the restored context — including what was already compacted away. */
+    fun restoreHistory(turns: List<PromptAssembler.Turn>, summary: String? = null) {
         resetConversation()
         for (t in turns.takeLast(MAX_HISTORY_TURNS)) history.addLast(t)
-        eventLogger?.log("conversation.restored", attributes = mapOf("turns" to history.size))
+        rollingSummary = summary?.takeIf { it.isNotBlank() }
+        eventLogger?.log(
+            "conversation.restored",
+            attributes = mapOf("turns" to history.size, "has_summary" to (rollingSummary != null)),
+        )
     }
+
+    /** The live rolling summary (persisted with the session so switches keep long-term context). */
+    fun currentSummary(): String? = rollingSummary
 
     private val history = ArrayDeque<PromptAssembler.Turn>()   // recent turns for multi-turn context
     // Output language pinned into the live LLM session's system prompt (null = no session yet).

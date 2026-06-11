@@ -11,6 +11,7 @@ sealed interface ConversationAction {
     data object OpenSessions : ConversationAction
     data object CloseSessions : ConversationAction
     data class SelectSession(val sessionId: String) : ConversationAction
+    data class DeleteSession(val sessionId: String) : ConversationAction
     data object StartHandsFree : ConversationAction
     data object StopHandsFree : ConversationAction
     data object StartPushToTalk : ConversationAction

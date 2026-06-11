@@ -85,7 +85,10 @@ class MainActivity : ComponentActivity() {
         if (sessionItems.isEmpty()) return
         val title = sessionItems.firstOrNull { it.role == TranscriptRole.USER }?.text?.take(48)
             ?: "(untitled)"
-        sessionStore.save(currentSessionId, title, System.currentTimeMillis(), sessionItems)
+        sessionStore.save(
+            currentSessionId, title, System.currentTimeMillis(), sessionItems,
+            summary = controller.currentSummary().orEmpty(),
+        )
         refreshSessionList()
     }
 
@@ -265,7 +268,7 @@ class MainActivity : ComponentActivity() {
                 else -> Unit
             }
         }
-        controller.restoreHistory(turns)
+        controller.restoreHistory(turns, summary = sessionStore.meta(sessionId)?.summary)
         sessionItems = items
         itemSeq = items.size
         streamingReply = ""
@@ -273,6 +276,21 @@ class MainActivity : ComponentActivity() {
         ctxOccupancy = null
         currentSessionId = sessionId
         setMsg("session restored (${turns.size} turns of context)")
+    }
+
+    /** Delete a saved session; deleting the open one behaves like starting a new session. */
+    private fun handleDeleteSession(sessionId: String, setMsg: (String) -> Unit) {
+        sessionStore.delete(sessionId)
+        if (sessionId == currentSessionId) {
+            controller.resetConversation()
+            sessionItems = emptyList()
+            streamingReply = ""
+            latencyLine = ""
+            ctxOccupancy = null
+            currentSessionId = "s${System.currentTimeMillis()}"
+        }
+        refreshSessionList()
+        setMsg("session deleted")
     }
 
     @Composable
@@ -298,6 +316,7 @@ class MainActivity : ComponentActivity() {
             onRequestMicPermission = { micPerm.launch(Manifest.permission.RECORD_AUDIO) },
             onNewSession = ::handleNewSession,
             onSelectSession = ::handleSelectSession,
+            onDeleteSession = ::handleDeleteSession,
             onSpeak = ::handleSpeak,
             onAskLlm = ::handleAskLlm,
             onConverse = ::handleConverse,

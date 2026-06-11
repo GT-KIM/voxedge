@@ -11,25 +11,44 @@ import java.io.File
  */
 class SessionStore(private val dir: File) {
 
-    data class SessionMeta(val id: String, val title: String, val updatedMs: Long)
+    data class SessionMeta(
+        val id: String,
+        val title: String,
+        val updatedMs: Long,
+        /** Rolling conversation summary at save time (restored into the LLM context on switch). */
+        val summary: String = "",
+    )
 
     fun list(): List<SessionMeta> = (dir.listFiles { f -> f.extension == "jsonl" } ?: emptyArray())
-        .mapNotNull { file ->
-            val first = file.useLines { lines -> lines.firstOrNull() } ?: return@mapNotNull null
-            val meta = parseFlatObject(first) ?: return@mapNotNull null
-            SessionMeta(
-                id = file.nameWithoutExtension,
-                title = meta["title"].orEmpty().ifEmpty { "(empty session)" },
-                updatedMs = meta["updated_ms"]?.toLongOrNull() ?: file.lastModified(),
-            )
-        }
+        .mapNotNull { file -> metaOf(file) }
         .sortedByDescending { it.updatedMs }
 
-    fun save(id: String, title: String, updatedMs: Long, items: List<TranscriptItem>) {
+    fun meta(id: String): SessionMeta? = metaOf(File(dir, "$id.jsonl"))
+
+    private fun metaOf(file: File): SessionMeta? {
+        if (!file.isFile) return null
+        val first = file.useLines { lines -> lines.firstOrNull() } ?: return null
+        val meta = parseFlatObject(first) ?: return null
+        return SessionMeta(
+            id = file.nameWithoutExtension,
+            title = meta["title"].orEmpty().ifEmpty { "(empty session)" },
+            updatedMs = meta["updated_ms"]?.toLongOrNull() ?: file.lastModified(),
+            summary = meta["summary"].orEmpty(),
+        )
+    }
+
+    fun save(
+        id: String,
+        title: String,
+        updatedMs: Long,
+        items: List<TranscriptItem>,
+        summary: String = "",
+    ) {
         dir.mkdirs()
         val sb = StringBuilder()
         sb.append("{\"title\": ").append(quote(title))
-            .append(", \"updated_ms\": \"").append(updatedMs).append("\"}\n")
+            .append(", \"updated_ms\": \"").append(updatedMs).append("\"")
+            .append(", \"summary\": ").append(quote(summary)).append("}\n")
         for (item in items) {
             sb.append("{\"role\": ").append(quote(item.role.name))
                 .append(", \"text\": ").append(quote(item.text))

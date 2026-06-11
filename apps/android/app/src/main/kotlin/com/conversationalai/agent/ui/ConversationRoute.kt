@@ -30,6 +30,7 @@ fun ConversationRoute(
     onRequestMicPermission: () -> Unit,
     onNewSession: ((String) -> Unit) -> Unit,
     onSelectSession: (String, (String) -> Unit) -> Unit,
+    onDeleteSession: (String, (String) -> Unit) -> Unit,
     onSpeak: (String, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onAskLlm: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onConverse: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
@@ -134,6 +135,9 @@ fun ConversationRoute(
             is ConversationAction.SelectSession -> {
                 sessionsOpen = false
                 onSelectSession(action.sessionId) { msg = it }
+            }
+            is ConversationAction.DeleteSession -> {
+                onDeleteSession(action.sessionId) { msg = it }   // drawer stays open
             }
             ConversationAction.StartHandsFree -> {
                 if (!micGranted) {

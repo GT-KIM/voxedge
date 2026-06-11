@@ -37,6 +37,20 @@ class SessionStoreTest {
     }
 
     @Test
+    fun roundTripsTheRollingSummaryInMeta() {
+        val s = store()
+        s.save(
+            "s1", "long chat", 5000L,
+            listOf(TranscriptItem("u0", TranscriptRole.USER, "hi")),
+            summary = "We discussed $hangul settings and a \"timer\".",
+        )
+        assertEquals("We discussed $hangul settings and a \"timer\".", s.meta("s1")?.summary)
+        // Sessions saved without a summary read back empty.
+        s.save("s2", "short", 6000L, listOf(TranscriptItem("u0", TranscriptRole.USER, "yo")))
+        assertEquals("", s.meta("s2")?.summary)
+    }
+
+    @Test
     fun listsSessionsNewestFirstWithTitles() {
         val s = store()
         s.save("old", "first chat", 1000L, listOf(TranscriptItem("u0", TranscriptRole.USER, "hi")))

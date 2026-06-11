@@ -92,21 +92,28 @@ fun SessionDrawer(
             Surface(
                 color = if (current) MaterialTheme.colorScheme.secondaryContainer
                 else MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
-                    .clickable { onAction(ConversationAction.SelectSession(session.id)) },
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                    Text(
-                        session.title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        session.updatedLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(
+                        Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 8.dp)
+                            .clickable { onAction(ConversationAction.SelectSession(session.id)) },
+                    ) {
+                        Text(
+                            session.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            session.updatedLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { onAction(ConversationAction.DeleteSession(session.id)) }) {
+                        Text("\u2715", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
