@@ -59,12 +59,18 @@ class NetworkFreeRuntimeEvidenceTest(unittest.TestCase):
 
         for required in [
             'File(context.filesDir, "tts_dlc")',
-            'File(context.filesDir, "llm_bundle")',
             'File(context.filesDir, "asr/model.int8.onnx")',
             'File(context.filesDir, "asr_dolphin")',
             'File(context.filesDir, "vad/silero_vad.onnx")',
         ]:
             self.assertIn(required, runtime)
+
+        # LLM model paths moved into the LlmCatalog registry (2026-06-10): the initializer
+        # resolves them against app-private filesDir, never a network source.
+        self.assertIn("File(context.filesDir, spec.relPath)", runtime)
+        catalog = (MAIN_SRC / "kotlin" / "com" / "conversationalai" / "agent" / "llm" / "LlmCatalog.kt").read_text(encoding="utf-8")
+        self.assertIn('relPath = "llm_bundle"', catalog)
+        self.assertIn('relPath = "llm_litert/gemma-4-E2B-it.litertlm"', catalog)
 
         self.assertIn("OfflineRecognizer", asr)
         self.assertIn('provider = "cpu"', asr)

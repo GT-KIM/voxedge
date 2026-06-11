@@ -14,6 +14,14 @@ sealed interface ConversationAction {
     data object OpenDiagnostics : ConversationAction
     data object CloseDiagnostics : ConversationAction
 
+    // Settings sheet (model selection applies on next launch; the rest applies live + persists).
+    data object OpenSettings : ConversationAction
+    data object CloseSettings : ConversationAction
+    data class SelectLlmModel(val modelId: String) : ConversationAction
+    data class SetSampling(val temp: Float, val topK: Int, val topP: Float) : ConversationAction
+    data object ResetSampling : ConversationAction
+    data object ToggleTools : ConversationAction
+
     data object RunDebugSpeak : ConversationAction
     data object RunDebugAskLlm : ConversationAction
     data object RunDebugConverse : ConversationAction

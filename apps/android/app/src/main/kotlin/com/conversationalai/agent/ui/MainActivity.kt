@@ -21,13 +21,17 @@ import com.conversationalai.agent.core.ConvState
 import com.conversationalai.agent.core.ConversationController
 import com.conversationalai.agent.core.PromptAssembler
 import com.conversationalai.agent.core.RuntimeEventLogger
-import com.conversationalai.agent.llm.GenieLlm
+import com.conversationalai.agent.llm.LlmCatalog
+import com.conversationalai.agent.llm.LlmEngine
+import com.conversationalai.agent.llm.LlmModelSpec
 import com.conversationalai.agent.tts.SupertonicTts
 import com.conversationalai.agent.tts.TtsInputBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+private const val EXTRA_DEBUG_TYPED_TURN = "debug_typed_turn"
 
 /**
  * Phase 3 build-step-2 slice: type text -> synthesize one clause on the HTP -> play via AudioTrack.
@@ -37,7 +41,10 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var tts: SupertonicTts
     private lateinit var inputBuilder: TtsInputBuilder
-    private lateinit var llm: GenieLlm
+    private lateinit var llm: LlmEngine
+    private lateinit var llmModel: LlmModelSpec
+    private lateinit var settingsController: SettingsController
+    private var initialBargeIn = false
     private lateinit var asr: OfflineAsr
     private lateinit var enhancer: SpeechEnhancer
     private lateinit var controller: ConversationController
@@ -69,6 +76,7 @@ class MainActivity : ComponentActivity() {
         tts = runtime.tts
         inputBuilder = runtime.inputBuilder
         llm = runtime.llm
+        llmModel = runtime.llmModel
         asr = runtime.asr
         enhancer = runtime.enhancer
         initOk = runtime.initOk
@@ -118,10 +126,48 @@ class MainActivity : ComponentActivity() {
                     Log.i(TAG, "dumped capture -> ${f.absolutePath} (${samples.size} samples)")
                 }.onFailure { Log.e(TAG, "capture dump failed", it) }
             },
+            // Offline device tools (timer/alarm/battery/flashlight/clock): enables the agentic
+            // tool-use loop on session-capable engines.
+            tools = com.conversationalai.agent.devicetools.DeviceTools.registry(this),
         )
+
+        // Persisted configuration (model choice, sampling, toggles) — applied to the live
+        // controller/engine now; the model choice itself was already honored by RuntimeInitializer.
+        val store = PrefsSettingsStore(this)
+        settingsController = SettingsController(
+            store = store,
+            activeModel = llmModel,
+            llm = llm,
+            controller = controller,
+            isProvisioned = { spec -> LlmCatalog.isProvisioned(filesDir, spec) },
+        )
+        settingsController.applyStartupSettings()
+        initialBargeIn = store.load().bargeIn
 
         setContent {
             MaterialTheme { Surface(Modifier.fillMaxSize()) { Screen() } }
+        }
+        handleDebugTurnIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleDebugTurnIntent(intent)
+    }
+
+    /** Headless adb test drive (dev-only): run one full typed turn (prompt -> LLM -> clause ->
+     *  TTS -> playback) without touching the UI, so the pipeline can be exercised with the screen
+     *  locked: `adb shell am start -n .../.ui.MainActivity --es debug_typed_turn "hello"`.
+     *  Results land in logcat + the runtime JSONL event log. */
+    private fun handleDebugTurnIntent(intent: android.content.Intent?) {
+        val text = intent?.getStringExtra(EXTRA_DEBUG_TYPED_TURN)?.takeIf { it.isNotBlank() } ?: return
+        Log.i(TAG, "debug_typed_turn: \"$text\"")
+        lifecycleScope.launch {
+            convReply = ""
+            convLine = "you: $text"
+            val summary = runConversation(text) { convReply += it }
+            Log.i(TAG, "debug_typed_turn reply: \"$convReply\"")
+            Log.i(TAG, "debug_typed_turn done: $summary")
         }
     }
 
@@ -144,6 +190,8 @@ class MainActivity : ComponentActivity() {
             vadOk = vadOk,
             micGranted = micGranted,
             initialAsrLanguage = asr.language,
+            initialBargeIn = initialBargeIn,
+            settingsController = settingsController,
             onRequestMicPermission = { micPerm.launch(Manifest.permission.RECORD_AUDIO) },
             onClearConversation = { convReply = ""; convLine = "" },
             onSpeak = ::handleSpeak,
@@ -220,11 +268,15 @@ class MainActivity : ComponentActivity() {
             var ttftMs = 0L
             var chars = 0
             withContext(Dispatchers.Default) {
+                // Raw one-shot debug query: keep it OUT of the conversation's persistent KV
+                // session (reset around it so the controller re-prefills its own transcript).
+                llm.resetSession()
                 llm.generate(prompt) { tok ->
                     if (ttftMs == 0L) ttftMs = (System.nanoTime() - t0) / 1_000_000
                     chars += tok.length
                     appendOutput(tok)
                 }
+                llm.resetSession()
             }
             val totalMs = (System.nanoTime() - t0) / 1_000_000
             Log.i(TAG, "LLM done TTFT=${ttftMs}ms total=${totalMs}ms chars=$chars")
@@ -333,7 +385,7 @@ class MainActivity : ComponentActivity() {
     private fun handleToggleBargeIn(current: Boolean, setBargeIn: (Boolean) -> Unit) {
         val next = !current
         setBargeIn(next)
-        controller.bargeInEnabled = next
+        settingsController.setBargeIn(next)   // applies to the controller + persists
     }
 
     private fun handleCancelCurrentTurn(

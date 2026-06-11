@@ -2,6 +2,7 @@ package com.conversationalai.agent.core
 
 import android.util.Log
 import com.conversationalai.agent.audio.PcmStreamPlayer
+import com.conversationalai.agent.core.tools.ToolRegistry
 import com.conversationalai.agent.llm.LlmEngine
 import com.conversationalai.agent.tts.ClauseInputBuilder
 import com.conversationalai.agent.tts.TtsEngine
@@ -14,6 +15,12 @@ import kotlinx.coroutines.withContext
 /**
  * Executes one assistant turn after ASR text is available:
  * LLM token stream -> clause segmentation -> TTS synthesis -> streamed PCM playback.
+ *
+ * With a [tools] registry and a session-capable engine the turn becomes a bounded AGENTIC LOOP:
+ * each generation step streams through a [ToolCallFilter]; a detected `<tool_call>` is executed
+ * (never spoken) and its result is appended to the warm KV session as a `<tool_response>`
+ * continuation for the next step, until the model answers in plain text or [MAX_TOOL_STEPS] is
+ * hit. Barge-in stays correct: a stale generation id stops the loop BEFORE any tool executes.
  */
 class SpeechTurnRunner(
     private val llm: LlmEngine,
@@ -26,6 +33,7 @@ class SpeechTurnRunner(
     private val onState: (ConvState) -> Unit,
     private val onSpeakingStarted: () -> Unit,
     private val eventLogger: RuntimeEventLogger? = null,
+    private val tools: ToolRegistry? = null,
 ) {
     suspend fun run(
         gid: Long,
@@ -33,6 +41,8 @@ class SpeechTurnRunner(
         userText: String,
         asrMs: Long,
         onDelta: (String) -> Unit,
+        template: ChatTemplate = ChatTemplate.CHATML,
+        useTools: Boolean = true,
     ): TurnRecord = coroutineScope {
         val clauses = Channel<ClauseChunk>(Channel.UNLIMITED)
         val player = playerFactory()
@@ -144,24 +154,68 @@ class SpeechTurnRunner(
             )
             clauses.trySend(chunk)
         })
-        withContext(Dispatchers.Default) {
-            llm.generate(prompt) { tok ->
-                if (!generationEpoch.isCurrent(gid)) return@generate
-                if (ttftMs == 0L) {
-                    ttftMs = elapsedSince(t0)
-                    eventLogger?.log(
-                        event = "llm.first_token",
-                        generationId = gid,
-                        elapsedMs = ttftMs,
-                        attributes = mapOf("token_chars" to tok.length),
-                    )
+        // Plain text reaching the user (UI delta + clause segmenter -> TTS). Tool-call JSON is
+        // filtered out upstream and never lands here.
+        val emitText = { text: String ->
+            reply.append(text)
+            onDelta(text)
+            seg.accept(text)
+        }
+        // The agentic loop needs a warm session to append tool responses incrementally.
+        val toolLoop = useTools && tools != null && !tools.isEmpty && llm.sessionCapable
+        val llmResult = withContext(Dispatchers.Default) {
+            var stepPrompt = prompt
+            var step = 0
+            var result: LlmEngine.Result
+            while (true) {
+                step += 1
+                val filter = if (toolLoop) ToolCallFilter(onText = emitText) else null
+                result = llm.generate(stepPrompt) { tok ->
+                    if (!generationEpoch.isCurrent(gid)) return@generate
+                    if (ttftMs == 0L) {
+                        ttftMs = elapsedSince(t0)
+                        eventLogger?.log(
+                            event = "llm.first_token",
+                            generationId = gid,
+                            elapsedMs = ttftMs,
+                            attributes = mapOf("token_chars" to tok.length),
+                        )
+                    }
+                    if (filter != null) filter.accept(tok) else emitText(tok)
                 }
-                reply.append(tok)
-                onDelta(tok)
-                seg.accept(tok)
+                filter?.finish()
+                val call = filter?.call ?: break
+                // Never execute tools for a cancelled (barged-in) generation.
+                if (result != LlmEngine.Result.OK || !generationEpoch.isCurrent(gid)) break
+                if (step >= MAX_TOOL_STEPS) {
+                    Log.w(TAG, "tool-step limit hit; dropping call '${call.name}'")
+                    eventLogger?.log(
+                        event = "tool.step_limit",
+                        generationId = gid,
+                        elapsedMs = elapsedSince(t0),
+                        attributes = mapOf("tool" to call.name, "step" to step),
+                    )
+                    break
+                }
+                eventLogger?.log(
+                    event = "tool.call",
+                    generationId = gid,
+                    elapsedMs = elapsedSince(t0),
+                    attributes = mapOf("tool" to call.name, "step" to step, "args" to call.arguments.size),
+                )
+                val toolResult = tools!!.dispatch(call)
+                eventLogger?.log(
+                    event = "tool.result",
+                    generationId = gid,
+                    elapsedMs = elapsedSince(t0),
+                    attributes = mapOf("tool" to call.name, "ok" to toolResult.ok, "chars" to toolResult.content.length),
+                )
+                Log.i(TAG, "tool ${call.name}(${call.arguments}) -> ok=${toolResult.ok}")
+                stepPrompt = template.toolResponse(toolResult.content)
             }
             seg.finish()
             clauses.close()
+            result
         }
         consumer.join()
         onPlayerStopped(player)
@@ -190,6 +244,7 @@ class SpeechTurnRunner(
                 "reply_chars" to record.replyText.length,
                 "spoken_chars" to record.spokenContent.length,
                 "barged_in" to record.bargedIn,
+                "llm_result" to llmResult.name,
             ),
         )
         record
@@ -206,5 +261,8 @@ class SpeechTurnRunner(
 
     companion object {
         private const val TAG = "SpeechTurnRunner"
+        /** Generation steps per turn (initial + after tool responses). Bounded so a confused
+         *  model can't chain tool calls while the user waits in silence. */
+        const val MAX_TOOL_STEPS = 3
     }
 }

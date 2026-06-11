@@ -57,13 +57,31 @@ class ConversationController(
     private val onUtteranceCaptured: (FloatArray) -> Unit = {},
     private val playerFactory: () -> PcmStreamPlayer = { StreamingPcmPlayer() },
     private val eventLogger: RuntimeEventLogger? = null,
+    // Optional on-device tools: enables the agentic tool-use loop (SpeechTurnRunner) when the
+    // engine is session-capable. Null/empty = plain conversational turns, exactly as before.
+    private val tools: com.conversationalai.agent.core.tools.ToolRegistry? = null,
 ) {
     /** Barge-in is EXPERIMENTAL and OFF by default: AEC residual on this device still causes the
      *  assistant to interrupt itself. When off, the mic stays on but turn-time speech is ignored
      *  (5b behavior: the user waits for the assistant to finish). Toggle from the UI to experiment. */
     @Volatile var bargeInEnabled = false
 
+    /** Tool use on/off (settings). Changing it rewrites the system prompt (tools module), so the
+     *  persistent LLM session is reset and re-prefilled on the next turn. */
+    @Volatile var toolsEnabled = true
+        private set
+
+    fun setToolsEnabled(enabled: Boolean) {
+        if (toolsEnabled == enabled) return
+        toolsEnabled = enabled
+        llm.resetSession()
+        sessionLang = null
+    }
+
     private val history = ArrayDeque<PromptAssembler.Turn>()   // recent turns for multi-turn context
+    // Output language pinned into the live LLM session's system prompt (null = no session yet).
+    // A turn in a different language forces a session re-prefill with the matching system prompt.
+    private var sessionLang: PromptAssembler.Lang? = null
     @Volatile private var running = false
     private val stateMachine = SpeechLoopStateMachine()
     @Volatile private var speakingSinceNs = 0L   // when SPEAKING began (for the barge-in grace window)
@@ -83,6 +101,7 @@ class ConversationController(
         onState = { setState(it) },
         onSpeakingStarted = { speakingSinceNs = System.nanoTime() },
         eventLogger = eventLogger,
+        tools = tools,
     )
 
     val isRunning: Boolean get() = running
@@ -94,6 +113,7 @@ class ConversationController(
         if (running) return
         running = true
         history.clear()   // fresh conversation
+        llm.resetSession(); sessionLang = null   // KV session mirrors the transcript lifecycle
         eventLogger?.log("conversation.start", attributes = mapOf("barge_in_enabled" to bargeInEnabled))
         val ch = Channel<FloatArray>(Channel.UNLIMITED)
         utterances = ch
@@ -106,6 +126,9 @@ class ConversationController(
             // Barge-in off: only accept utterances detected while LISTENING (ignore turn-time mic /
             // TTS leakage). Barge-in on: accept always (the barge-in utterance becomes the next turn).
             onUtterance = { s -> if (running && (bargeInEnabled || state == ConvState.LISTENING)) ch.trySend(s) },
+            // Pick the capture profile: barge-in needs the AEC/VOICE_COMMUNICATION path; otherwise use
+            // the ASR-tuned VOICE_RECOGNITION source (no AEC/NS) for a cleaner signal to the recognizer.
+            bargeIn = bargeInEnabled,
         )
         micStream = mic
         if (!mic.start()) { Log.e(TAG, "mic start failed"); stop(); return }
@@ -222,13 +245,46 @@ class ConversationController(
                 "asr_ms" to asrMs,
             ),
         )
-        val prompt = PromptAssembler.chatml(userText, history.toList())
+        // Session-wise prompting: continue the warm KV session with just the new turn, or reset
+        // and re-prefill the recent transcript (first turn, language switch, post-abort, or the
+        // context window filling up — re-prefill is also how old turns get evicted from KV).
+        val turnLang = PromptAssembler.resolveLang(userText)
+        val occupancy = llm.contextOccupancyPercent()
+        val warmTurn = LlmSessionPolicy.canContinue(
+            sessionCapable = llm.sessionCapable,
+            sessionWarm = llm.sessionWarm(),
+            occupancyPercent = occupancy,
+            sessionLang = sessionLang,
+            turnLang = turnLang,
+        )
+        val template = ChatTemplate.fromId(llm.chatTemplateId())
+        // Advertise tools only when the agentic loop can actually run (warm-session continuation).
+        val toolSpecs = if (toolsEnabled && tools != null && !tools.isEmpty && llm.sessionCapable) {
+            tools.specs
+        } else {
+            emptyList()
+        }
+        val prompt = if (warmTurn) {
+            template.incremental(userText)
+        } else {
+            if (llm.sessionCapable) llm.resetSession()
+            sessionLang = turnLang
+            val system = PromptAssembler.systemPrompt(lang = turnLang, userSample = userText, tools = toolSpecs)
+            llm.setSystemPrompt(system)   // "raw" engines apply this on session (re)creation
+            template.full(system, history.toList(), userText)
+        }
         eventLogger?.log(
             event = "prompt.assembled",
             generationId = gid,
-            attributes = mapOf("prompt_chars" to prompt.length, "history_turns" to history.size),
+            attributes = mapOf(
+                "prompt_chars" to prompt.length,
+                "history_turns" to history.size,
+                "session_mode" to if (warmTurn) "warm" else "full",
+                "context_occupancy_pct" to occupancy,
+                "lang" to turnLang.name,
+            ),
         )
-        val rec = turnRunner.run(gid, prompt, userText, asrMs, onDelta)
+        val rec = turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled)
         // Record into history for multi-turn context (skip interrupted turns; cap recent turns).
         val replyText = rec.replyText.trim()
         if (!rec.bargedIn && replyText.isNotEmpty()) {

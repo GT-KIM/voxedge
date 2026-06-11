@@ -130,8 +130,9 @@ class SpeechTurnRunnerTest {
 
     private class FakeLlm(private val response: String) : LlmEngine {
         override fun name(): String = "fake-llm"
-        override fun generate(prompt: String, onToken: (String) -> Unit) {
+        override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
             onToken(response)
+            return LlmEngine.Result.OK
         }
         override fun abort() = Unit
     }

@@ -51,6 +51,11 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        // JVM unit tests touch android.util.Log on some code paths (ConversationController);
+        // return-default stubs keep those tests host-runnable without Robolectric.
+        unitTests.isReturnDefaultValues = true
+    }
     // QAIRT/Genie .so files are copied into this dir by the prepare step (gitignored).
     sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
     packaging {
@@ -64,6 +69,9 @@ dependencies {
     // Owned offline ASR engine (sherpa-onnx): prebuilt AAR (arm64 JNI + Kotlin API) in app/libs.
     // SenseVoice int8 model is pushed to app storage separately (not bundled in the APK).
     implementation(files("libs/sherpa-onnx-1.13.2.aar"))
+    // LiteRT-LM runtime (.litertlm bundles, e.g. Gemma 4 E2B) — second LlmEngine backend.
+    // Model files are provisioned separately (see MODELS.md), like every other model here.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.activity:activity-compose:1.9.1")

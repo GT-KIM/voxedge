@@ -20,6 +20,8 @@ fun ConversationRoute(
     vadOk: Boolean,
     micGranted: Boolean,
     initialAsrLanguage: String,
+    initialBargeIn: Boolean,
+    settingsController: SettingsController,
     onRequestMicPermission: () -> Unit,
     onClearConversation: () -> Unit,
     onSpeak: (String, (Boolean) -> Unit, (String) -> Unit) -> Unit,
@@ -40,8 +42,10 @@ fun ConversationRoute(
     var asrLang by remember { mutableStateOf(initialAsrLanguage) }
     var recording by remember { mutableStateOf(false) }
     var conv by remember { mutableStateOf(false) }
-    var bargeIn by remember { mutableStateOf(false) }
+    var bargeIn by remember { mutableStateOf(initialBargeIn) }
     var diagnosticsOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var settings by remember { mutableStateOf(settingsController.uiState()) }
 
     LaunchedEffect(status) {
         msg = status
@@ -58,6 +62,8 @@ fun ConversationRoute(
         handsFree = conv,
         bargeIn = bargeIn,
         diagnosticsOpen = diagnosticsOpen,
+        settingsOpen = settingsOpen,
+        settings = settings,
         loopState = loopState,
         transcript = buildTranscriptItems(convLine, convReply, llmOut, msg, loopState),
         runtimeReadiness = buildRuntimeReadiness(
@@ -76,6 +82,26 @@ fun ConversationRoute(
             is ConversationAction.UpdateTypedText -> text = action.text
             is ConversationAction.ChangeLanguage -> {
                 onChangeLanguage(action.language, { asrLang = it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.OpenSettings -> {
+                settings = settingsController.uiState()
+                settingsOpen = true
+            }
+            ConversationAction.CloseSettings -> settingsOpen = false
+            is ConversationAction.SelectLlmModel -> {
+                settings = settingsController.selectModel(action.modelId)
+                if (settings.restartRequired) msg = "Restart the app to load the selected model."
+            }
+            is ConversationAction.SetSampling -> {
+                settings = settingsController.setSampling(action.temp, action.topK, action.topP)
+                msg = "sampling: temp=%.2f top-k=%d top-p=%.2f".format(action.temp, action.topK, action.topP)
+            }
+            ConversationAction.ResetSampling -> {
+                settings = settingsController.resetSampling()
+                msg = "sampling reset to model defaults"
+            }
+            ConversationAction.ToggleTools -> {
+                settings = settingsController.toggleTools()
             }
             ConversationAction.SubmitTypedTurn -> {
                 onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })

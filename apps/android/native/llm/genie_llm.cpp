@@ -33,6 +33,7 @@ namespace {
 struct LlmEngine {
   GenieDialogConfig_Handle_t cfg = nullptr;
   GenieDialog_Handle_t dialog = nullptr;
+  uint32_t ctxSize = 4096;  // context.size from genie_config.json (occupancy normalization)
 };
 
 // userData for the streaming query callback. GenieDialog_query is synchronous and invokes the
@@ -42,7 +43,14 @@ struct CbCtx {
   JNIEnv* env;
   jobject sink;       // TokenSink instance
   jmethodID onToken;  // void onToken(String, int)
+  bool aborted = false;  // set when the callback sees GENIE_DIALOG_SENTENCE_ABORT
 };
+
+// nativeGenerate status codes (mirrored by GenieLlm.kt -> LlmEngine.Result).
+constexpr jint GEN_OK = 0;
+constexpr jint GEN_CONTEXT_EXCEEDED = 1;
+constexpr jint GEN_ABORTED = 2;
+constexpr jint GEN_ERROR = 3;
 
 std::string readFile(const std::string& p) {
   std::ifstream f(p, std::ios::binary);
@@ -63,8 +71,10 @@ void replaceAll(std::string& s, const std::string& from, const std::string& to) 
 void queryCallback(const char* response,
                    const GenieDialog_SentenceCode_t code,
                    const void* userData) {
-  auto* ctx = reinterpret_cast<const CbCtx*>(userData);
-  if (!ctx || !response) return;
+  auto* ctx = const_cast<CbCtx*>(reinterpret_cast<const CbCtx*>(userData));
+  if (!ctx) return;
+  if (code == GENIE_DIALOG_SENTENCE_ABORT) ctx->aborted = true;
+  if (!response) return;
   jstring js = ctx->env->NewStringUTF(response);
   ctx->env->CallVoidMethod(ctx->sink, ctx->onToken, js, static_cast<jint>(code));
   ctx->env->DeleteLocalRef(js);
@@ -103,6 +113,16 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeInit(JNIEnv* env, jobject, js
   }
 
   auto* e = new LlmEngine();
+  // context.size (first "size" key in the config) — used to turn the occupancy token count
+  // into a percent. Defaults to 4096 if the parse fails.
+  size_t sp = cfg.find("\"size\"");
+  if (sp != std::string::npos) {
+    sp = cfg.find(':', sp);
+    if (sp != std::string::npos) {
+      unsigned long v = std::strtoul(cfg.c_str() + sp + 1, nullptr, 10);
+      if (v > 0) e->ctxSize = static_cast<uint32_t>(v);
+    }
+  }
   Genie_Status_t st = GenieDialogConfig_createFromJson(cfg.c_str(), &e->cfg);
   if (st != GENIE_STATUS_SUCCESS) {
     LOGE("GenieDialogConfig_createFromJson failed: %d", st);
@@ -120,21 +140,22 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeInit(JNIEnv* env, jobject, js
   return reinterpret_cast<jlong>(e);
 }
 
-// nativeGenerate(handle, prompt, sink) -> ok. prompt must be the fully ChatML-formatted query.
-// Streams response chunks to sink.onToken(text, sentenceCode) synchronously, then resets the KV
-// cache so each call is an independent single turn (multi-turn history comes with the controller).
-extern "C" JNIEXPORT jboolean JNICALL
+// nativeGenerate(handle, prompt, sink) -> GEN_* status. prompt must be ChatML-formatted: the FULL
+// transcript on a cold/re-prefilled session, or ONLY the new user turn on a warm session — the KV
+// cache PERSISTS across calls (no reset here). Session validity policy lives in Kotlin
+// (GenieLlm.warm + core/LlmSessionPolicy); GenieLlm.resetSession() drops the cache explicitly.
+extern "C" JNIEXPORT jint JNICALL
 Java_com_conversationalai_agent_llm_GenieLlm_nativeGenerate(JNIEnv* env, jobject, jlong handle,
                                                             jstring jPrompt, jobject sink) {
   auto* e = reinterpret_cast<LlmEngine*>(handle);
-  if (!e || !e->dialog) return JNI_FALSE;
+  if (!e || !e->dialog) return GEN_ERROR;
 
   jclass cls = env->GetObjectClass(sink);
   jmethodID onToken = env->GetMethodID(cls, "onToken", "(Ljava/lang/String;I)V");
   env->DeleteLocalRef(cls);
   if (!onToken) {
     LOGE("TokenSink.onToken(String,int) not found");
-    return JNI_FALSE;
+    return GEN_ERROR;
   }
 
   const char* p = env->GetStringUTFChars(jPrompt, nullptr);
@@ -143,11 +164,77 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeGenerate(JNIEnv* env, jobject
       GenieDialog_query(e->dialog, p, GENIE_DIALOG_SENTENCE_COMPLETE, queryCallback, &ctx);
   env->ReleaseStringUTFChars(jPrompt, p);
 
-  GenieDialog_reset(e->dialog);  // independent single turn for now
+  if (ctx.aborted || st == GENIE_STATUS_WARNING_ABORTED) return GEN_ABORTED;
+  if (st == GENIE_STATUS_WARNING_CONTEXT_EXCEEDED) {
+    LOGI("GenieDialog_query: context exceeded");
+    return GEN_CONTEXT_EXCEEDED;
+  }
   if (st != GENIE_STATUS_SUCCESS) {
     LOGE("GenieDialog_query failed: %d", st);
+    return GEN_ERROR;
+  }
+  return GEN_OK;
+}
+
+// Drop the dialog's accumulated KV cache (session). Next query must re-send the full transcript.
+extern "C" JNIEXPORT void JNICALL
+Java_com_conversationalai_agent_llm_GenieLlm_nativeReset(JNIEnv*, jobject, jlong handle) {
+  auto* e = reinterpret_cast<LlmEngine*>(handle);
+  if (e && e->dialog) GenieDialog_reset(e->dialog);
+}
+
+// Percent (0..100) of the context window occupied by the live session, or -1 if unavailable.
+// GENIE_DIALOG_PARAM_CONTEXT_OCCUPANCY reports occupied TOKENS (verified on-device 2026-06-10:
+// ~774 after one ~3.2KB-prompt turn), so normalize by context.size here.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_conversationalai_agent_llm_GenieLlm_nativeContextOccupancy(JNIEnv*, jobject,
+                                                                    jlong handle) {
+  auto* e = reinterpret_cast<LlmEngine*>(handle);
+  if (!e || !e->dialog) return -1;
+  Genie_DataType_t dt;
+  Genie_Value_t val;
+  Genie_Status_t st =
+      GenieDialog_getValue(e->dialog, GENIE_DIALOG_PARAM_CONTEXT_OCCUPANCY, nullptr, &dt, &val);
+  if (st != GENIE_STATUS_SUCCESS || dt != GENIE_DATATYPE_UINT_32) return -1;
+  uint64_t pct = static_cast<uint64_t>(val.uint32Value) * 100u / e->ctxSize;
+  return static_cast<jint>(pct > 100 ? 100 : pct);
+}
+
+// Apply new sampling params to the dialog's live sampler. The JSON shape matches the "sampler"
+// section of genie_config.json (seed kept at the bundle's 42 for run-to-run comparability).
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_conversationalai_agent_llm_GenieLlm_nativeSetSampling(JNIEnv*, jobject, jlong handle,
+                                                               jfloat temp, jint topK,
+                                                               jfloat topP) {
+  auto* e = reinterpret_cast<LlmEngine*>(handle);
+  if (!e || !e->dialog) return JNI_FALSE;
+  GenieSampler_Handle_t sampler = nullptr;
+  Genie_Status_t st = GenieDialog_getSampler(e->dialog, &sampler);
+  if (st != GENIE_STATUS_SUCCESS || !sampler) {
+    LOGE("GenieDialog_getSampler failed: %d", st);
     return JNI_FALSE;
   }
+  // Shape per ${QAIRT}/examples/Genie/configs/sampler.json: a {"sampler": {...}} wrapper with
+  // "type":"basic" is required — the bare sampler object fails with GENIE_STATUS_ERROR_JSON_SCHEMA
+  // (-8), verified on-device 2026-06-10.
+  char json[224];
+  std::snprintf(json, sizeof(json),
+                "{\"sampler\":{\"type\":\"basic\",\"version\":1,\"seed\":42,"
+                "\"temp\":%.3f,\"top-k\":%d,\"top-p\":%.3f,\"greedy\":false}}",
+                static_cast<double>(temp), static_cast<int>(topK), static_cast<double>(topP));
+  GenieSamplerConfig_Handle_t cfg = nullptr;
+  st = GenieSamplerConfig_createFromJson(json, &cfg);
+  if (st != GENIE_STATUS_SUCCESS) {
+    LOGE("GenieSamplerConfig_createFromJson failed: %d (%s)", st, json);
+    return JNI_FALSE;
+  }
+  st = GenieSampler_applyConfig(sampler, cfg);
+  GenieSamplerConfig_free(cfg);
+  if (st != GENIE_STATUS_SUCCESS) {
+    LOGE("GenieSampler_applyConfig failed: %d", st);
+    return JNI_FALSE;
+  }
+  LOGI("sampler updated: %s", json);
   return JNI_TRUE;
 }
 

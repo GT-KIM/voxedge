@@ -72,6 +72,27 @@ data class LatencySummary(
     val totalMs: Long? = null,
 )
 
+/** One selectable LLM in the settings sheet. [active] = loaded in this process;
+ *  [selected] = persisted choice (loads on next launch when it differs from active). */
+data class LlmModelOption(
+    val id: String,
+    val displayName: String,
+    val provisioned: Boolean,
+    val active: Boolean,
+    val selected: Boolean,
+)
+
+data class SettingsUiState(
+    val activeModelName: String = "",
+    val models: List<LlmModelOption> = emptyList(),
+    val temp: Float = 0.6f,
+    val topK: Int = 20,
+    val topP: Float = 0.8f,
+    val samplingOverridden: Boolean = false,
+    val toolsEnabled: Boolean = true,
+    val restartRequired: Boolean = false,
+)
+
 data class ConversationUiState(
     val typedText: String = "",
     val busy: Boolean = false,
@@ -82,6 +103,8 @@ data class ConversationUiState(
     val handsFree: Boolean = false,
     val bargeIn: Boolean = false,
     val diagnosticsOpen: Boolean = false,
+    val settingsOpen: Boolean = false,
+    val settings: SettingsUiState = SettingsUiState(),
     val loopState: SpeechLoopUiState = SpeechLoopUiState.IDLE,
     val transcript: List<TranscriptItem> = emptyList(),
     val runtimeReadiness: List<RuntimeReadiness> = emptyList(),

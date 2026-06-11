@@ -12,6 +12,13 @@ enum ConversationAction: Equatable {
     case toggleBargeIn
     case openDiagnostics
     case closeDiagnostics
+    // Settings sheet (parity with Android's settings actions).
+    case openSettings
+    case closeSettings
+    case selectLlmModel(String)
+    case setSampling(Double, Int, Double)
+    case resetSampling
+    case toggleTools
     case runDebugSpeak
     case runDebugAskLlm
     case runDebugConverse

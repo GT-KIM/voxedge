@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Offline device tools (set_timer / set_alarm) hand off to the system clock app. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <application
         android:allowBackup="false"
@@ -16,9 +18,17 @@
              request for vendor public native libraries; public.libraries listing alone is not
              enough. Without this the app process cannot complete the HTP FastRPC probe. -->
         <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+        <!-- OpenCL for the LiteRT-LM GPU backend (same API-31+ vendor-library rule as above). -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-car.so" android:required="false" />
 
+        <!-- singleTop so repeated adb "am start" debug_typed_turn invocations reach the SAME
+             resident instance via onNewIntent (headless turn driving without reloading the
+             engines or stacking duplicate LLM/TTS residents). -->
         <activity
             android:name=".ui.MainActivity"
+            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

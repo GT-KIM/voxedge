@@ -102,14 +102,29 @@ fun ConversationScreen(
         }
         Text(state.statusMessage, style = MaterialTheme.typography.bodyMedium)
 
-        TextButton(
-            onClick = {
-                onAction(
-                    if (state.diagnosticsOpen) ConversationAction.CloseDiagnostics else ConversationAction.OpenDiagnostics,
-                )
-            },
-        ) {
-            Text(if (state.diagnosticsOpen) "Close diagnostics" else "Diagnostics")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    onAction(
+                        if (state.settingsOpen) ConversationAction.CloseSettings else ConversationAction.OpenSettings,
+                    )
+                },
+            ) {
+                Text(if (state.settingsOpen) "Close settings" else "Settings")
+            }
+            TextButton(
+                onClick = {
+                    onAction(
+                        if (state.diagnosticsOpen) ConversationAction.CloseDiagnostics else ConversationAction.OpenDiagnostics,
+                    )
+                },
+            ) {
+                Text(if (state.diagnosticsOpen) "Close diagnostics" else "Diagnostics")
+            }
+        }
+
+        if (state.settingsOpen) {
+            SettingsSheet(settings = state.settings, bargeIn = state.bargeIn, onAction = onAction)
         }
 
         if (state.diagnosticsOpen) {

@@ -36,7 +36,7 @@ class AndroidControllerContractTest(unittest.TestCase):
         runner = (CORE / "SpeechTurnRunner.kt").read_text(encoding="utf-8")
 
         self.assertIn("private val turnRunner = SpeechTurnRunner(", controller)
-        self.assertIn("turnRunner.run(gid, prompt, userText, asrMs, onDelta)", controller)
+        self.assertIn("turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled)", controller)
         self.assertNotIn("val clauses = Channel<String>", controller)
         self.assertNotIn("val seg = ClauseSegmenter", controller)
         self.assertNotIn("player.write(pcm)", controller)
@@ -44,7 +44,9 @@ class AndroidControllerContractTest(unittest.TestCase):
         self.assertIn("class SpeechTurnRunner(", runner)
         self.assertIn("val clauses = Channel<ClauseChunk>(Channel.UNLIMITED)", runner)
         self.assertIn("val seg = ClauseSegmenter", runner)
-        self.assertIn("llm.generate(prompt)", runner)
+        # The agentic tool loop generates per step (stepPrompt = initial prompt, then tool
+        # responses); single-step turns still pass the initial prompt through unchanged.
+        self.assertIn("llm.generate(stepPrompt)", runner)
         self.assertIn("tts.synthesizeClause", runner)
         self.assertIn("player.write(pcm)", runner)
         self.assertIn("private data class ClauseChunk", runner)
@@ -138,7 +140,10 @@ class AndroidControllerContractTest(unittest.TestCase):
         self.assertIn("data class Result(", initializer)
         self.assertIn("fun initialize(): Result", initializer)
         self.assertIn("private fun configureDspEnvironment()", initializer)
-        self.assertIn("private fun initializeLlm(llm: GenieLlm): Boolean", initializer)
+        # Multi-backend LLM init (2026-06-10): the initializer selects the persisted LlmCatalog
+        # model and returns whichever engine (Genie / LiteRT-LM) it constructed.
+        self.assertIn("private fun selectLlmModel(): LlmModelSpec", initializer)
+        self.assertIn("private fun initializeLlm(spec: LlmModelSpec): Pair<LlmEngine, Boolean>", initializer)
         self.assertIn("private fun initializeAsr(asr: OfflineAsr): Boolean", initializer)
         self.assertIn("private fun initializeEnhancer(enhancer: SpeechEnhancer): Boolean", initializer)
 

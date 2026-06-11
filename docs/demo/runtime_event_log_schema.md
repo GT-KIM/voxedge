@@ -57,12 +57,19 @@ ASR/prompt:
 - `asr.final`
 - `asr.no_speech`
 - `turn.start`
-- `prompt.assembled`
+- `prompt.assembled` — includes `session_mode` (`warm` incremental KV continuation vs `full`
+  transcript re-prefill), `context_occupancy_pct`, and `lang` since 2026-06-10.
 
 LLM:
 
 - `llm.generate_start`
 - `llm.first_token`
+
+Tool use (agentic loop, 2026-06-10, additive):
+
+- `tool.call` — the model requested a tool (`tool`, `step`, `args`).
+- `tool.result` — dispatch outcome (`tool`, `ok`, `chars`).
+- `tool.step_limit` — the per-turn generation-step cap stopped a tool chain.
 
 TTS/playback:
 
@@ -75,8 +82,9 @@ TTS/playback:
 
 Turn/control:
 
-- `turn.end`
+- `turn.end` — includes `llm_result` (`OK`/`CONTEXT_EXCEEDED`/`ABORTED`/`ERROR`) since 2026-06-10.
 - `control.barge_in`
+- `control.llm_model_selected` — persisted LLM choice changed (`model_id`); applied next launch.
 
 ## Privacy Notes
 

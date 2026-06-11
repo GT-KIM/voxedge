@@ -11,7 +11,8 @@ each is governed by its own license, so they are **not redistributed here.** You
 
 | Component | Model | Where it goes (device app storage) |
 |---|---|---|
-| LLM | Qwen3-4B-Instruct-2507, Qualcomm Genie `w4a16` bundle | `files/llm_bundle/` |
+| LLM (default) | Qwen3-4B-Instruct-2507, Qualcomm Genie `w4a16` bundle | `files/llm_bundle/` |
+| LLM (optional) | Gemma 4 E2B `.litertlm` (LiteRT-LM) | `files/llm_litert/gemma-4-E2B-it.litertlm` |
 | TTS | Supertonic (short-chunk, graph-prepared DLCs) | `files/tts_dlc/` |
 | ASR (KO) | sherpa-onnx Dolphin base CTC | `files/asr_dolphin/` |
 | ASR (EN) | sherpa-onnx SenseVoice int8 | `files/asr/` |
@@ -26,6 +27,19 @@ each is governed by its own license, so they are **not redistributed here.** You
   See `converter/phase1/fetch_qwen3_4b_instruct_2507_genie_bundle.sh` and
   `converter/phase1/validate_qwen3_genie_bundle.py`.
 - The bundle is ~3 GB (4 context binaries + tokenizer + `genie_config.json`).
+
+## LLM (optional) — Gemma 4 E2B (LiteRT-LM)
+
+- **Model license:** Gemma Terms of Use (Google). Review before redistribution/commercial use.
+- **How to get it:** the official `.litertlm` bundle is published at
+  `litert-community/gemma-4-E2B-it-litert-lm` on Hugging Face — see
+  `converter/phase1/fetch_gemma4_litert_lm.sh`. Mixed 2/4/8-bit quantization, ~0.8 GB text-only
+  weight footprint.
+- **Runtime:** LiteRT-LM (`com.google.ai.edge.litertlm:litertlm-android`, Apache-2.0) is pulled by
+  Gradle — no vendor SDK needed. The app runs it on the GPU backend by default; NPU (QNN) is a
+  follow-up measurement.
+- **Selection:** the in-app `LLM:` button cycles the persisted model choice (applied on next
+  launch); if the selected model is not provisioned the app falls back to whichever one is.
 
 ## TTS — Supertonic
 

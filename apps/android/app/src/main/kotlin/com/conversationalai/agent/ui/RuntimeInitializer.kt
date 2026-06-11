@@ -6,6 +6,11 @@ import android.util.Log
 import com.conversationalai.agent.asr.OfflineAsr
 import com.conversationalai.agent.audio.SpeechEnhancer
 import com.conversationalai.agent.llm.GenieLlm
+import com.conversationalai.agent.llm.LiteRtLlm
+import com.conversationalai.agent.llm.LlmBackend
+import com.conversationalai.agent.llm.LlmCatalog
+import com.conversationalai.agent.llm.LlmEngine
+import com.conversationalai.agent.llm.LlmModelSpec
 import com.conversationalai.agent.tts.DspAssets
 import com.conversationalai.agent.tts.SupertonicTts
 import com.conversationalai.agent.tts.TtsInputBuilder
@@ -13,10 +18,13 @@ import java.io.File
 
 /** Initializes concrete Android runtime engines and probes provisioned model assets. */
 class RuntimeInitializer(private val context: Context) {
+
+    private val settings: AppSettings by lazy { PrefsSettingsStore(context).load() }
     data class Result(
         val tts: SupertonicTts,
         val inputBuilder: TtsInputBuilder,
-        val llm: GenieLlm,
+        val llm: LlmEngine,
+        val llmModel: LlmModelSpec,
         val asr: OfflineAsr,
         val enhancer: SpeechEnhancer,
         val initOk: Boolean,
@@ -42,8 +50,8 @@ class RuntimeInitializer(private val context: Context) {
             if (initOk) "engine ready: ${tts.version()}" else "nativeInit failed (see logcat)"
         }
 
-        val llm = GenieLlm()
-        val llmOk = initializeLlm(llm)
+        val llmModel = selectLlmModel()
+        val (llm, llmOk) = initializeLlm(llmModel)
         val asr = OfflineAsr(
             senseVoiceDir = File(context.filesDir, "asr").absolutePath,
             dolphinDir = File(context.filesDir, "asr_dolphin").absolutePath,
@@ -62,6 +70,7 @@ class RuntimeInitializer(private val context: Context) {
             tts = tts,
             inputBuilder = inputBuilder,
             llm = llm,
+            llmModel = llmModel,
             asr = asr,
             enhancer = enhancer,
             initOk = initOk,
@@ -89,15 +98,54 @@ class RuntimeInitializer(private val context: Context) {
         }.onFailure { Log.e(TAG, "setenv failed", it) }
     }
 
-    private fun initializeLlm(llm: GenieLlm): Boolean {
-        val llmBundle = File(context.filesDir, "llm_bundle")
-        return if (!llmBundle.exists() || llmBundle.list()?.isEmpty() != false) {
-            Log.w(TAG, "Genie bundle absent ??push to ${llmBundle.absolutePath} (adb)")
-            false
-        } else {
-            val ok = llm.init(llmBundle.absolutePath)
-            Log.i(TAG, if (ok) "LLM ready: ${llm.name()}" else "LLM nativeInit failed (see logcat)")
-            ok
+    /** Persisted model choice (LlmCatalog id), falling back to whatever IS provisioned so a
+     *  missing selection never bricks the loop. */
+    private fun selectLlmModel(): LlmModelSpec {
+        val wanted = LlmCatalog.byId(settings.llmModelId)
+        if (isProvisioned(wanted)) return wanted
+        val available = LlmCatalog.ALL.firstOrNull { isProvisioned(it) }
+        if (available != null) {
+            Log.w(TAG, "LLM '${wanted.id}' not provisioned; falling back to '${available.id}'")
+            return available
+        }
+        return wanted   // nothing provisioned; init below logs the push instructions
+    }
+
+    private fun isProvisioned(spec: LlmModelSpec): Boolean =
+        LlmCatalog.isProvisioned(context.filesDir, spec)
+
+    private fun initializeLlm(spec: LlmModelSpec): Pair<LlmEngine, Boolean> {
+        val path = File(context.filesDir, spec.relPath)
+        if (!isProvisioned(spec)) {
+            Log.w(TAG, "LLM '${spec.id}' absent ??push to ${path.absolutePath} (adb, see MODELS.md)")
+            // Keep the historical default engine object so the UI can show "not ready".
+            return when (spec.backend) {
+                LlmBackend.GENIE -> GenieLlm() to false
+                LlmBackend.LITERT -> LiteRtLlm() to false
+            }
+        }
+        // Catalog sampling with any persisted user overrides (settings UI) on top.
+        val sampling = settings.effectiveSampling(spec.sampling)
+        return when (spec.backend) {
+            LlmBackend.GENIE -> {
+                val llm = GenieLlm()
+                val ok = llm.init(path.absolutePath)
+                Log.i(TAG, if (ok) "LLM ready: ${llm.name()}" else "LLM nativeInit failed (see logcat)")
+                // Non-fatal if the runtime rejects it — generation then keeps the
+                // genie_config.json sampler values.
+                if (ok && !llm.setSampling(sampling)) Log.w(TAG, "sampling not applied")
+                llm to ok
+            }
+            LlmBackend.LITERT -> {
+                val llm = LiteRtLlm()
+                val ok = llm.init(
+                    modelPath = path.absolutePath,
+                    cacheDir = context.cacheDir.absolutePath,
+                    sampling = sampling,
+                )
+                Log.i(TAG, if (ok) "LLM ready: ${llm.name()}" else "LiteRT-LM init failed (see logcat)")
+                llm to ok
+            }
         }
     }
 

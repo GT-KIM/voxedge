@@ -56,10 +56,19 @@
         "rolling_summary_tokens": { "type": "integer", "default": 400 },
         "sampler": {
           "type": "object",
+          "description": "Runtime sampling override applied after engine init (Genie: GenieSampler_applyConfig). Defaults follow the Qwen3 Genie bundle (top-k 20 / top-p 0.8) with temp lowered 0.7 -> 0.6 for grounded spoken answers.",
           "properties": {
-            "temp": { "type": "number", "default": 0.8 },
-            "top_k": { "type": "integer", "default": 40 },
-            "top_p": { "type": "number", "default": 0.95 }
+            "temp": { "type": "number", "default": 0.6 },
+            "top_k": { "type": "integer", "default": 20 },
+            "top_p": { "type": "number", "default": 0.8 }
+          }
+        },
+        "kv_session": {
+          "type": "object",
+          "description": "Persistent KV-cache session across turns (engine-supported). A warm turn sends only the incremental user block; reset + transcript re-prefill happens on language switch, abort/overflow, or occupancy reaching max_occupancy_percent.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "max_occupancy_percent": { "type": "integer", "default": 80, "description": "Re-prefill (and thereby evict old turns) at/above this context occupancy." }
           }
         }
       }
