@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -27,13 +26,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * SESSION-WISE conversation screen (the agent UI): a persistent multi-turn transcript timeline
- * fills the screen (auto-scrolling, user right / assistant left, tool chips and interruption
- * markers per turn), with a session header (state, active model, context fill, New session) and
- * the input controls pinned at the bottom. Settings/diagnostics open as bounded sheets.
+ * SESSION-WISE conversation screen in the coding-agent (Claude Code / Codex) style: a full-width
+ * document-flow transcript — user turns as accent-prefixed lines, assistant prose as plain
+ * paragraphs, tool executions as muted monospace action rows, a muted per-turn latency meta line,
+ * and a "thinking..." status row while the agent works. Session header (state, active model,
+ * context fill, New session) on top; the prompt box pinned at the bottom.
  */
 @Composable
 fun ConversationScreen(
@@ -47,34 +49,44 @@ fun ConversationScreen(
         SessionHeader(state, onAction)
         RuntimeReadinessStrip(state.runtimeReadiness)
 
-        // --- the session timeline ---
+        // --- the session feed (document flow, Codex-style) ---
         val listState = rememberLazyListState()
         val items = state.transcript
-        LaunchedEffect(items.size, items.lastOrNull()?.text?.length) {
+        val working = state.loopState == SpeechLoopUiState.GENERATING ||
+            state.loopState == SpeechLoopUiState.TRANSCRIBING ||
+            state.loopState == SpeechLoopUiState.SPEAKING
+        LaunchedEffect(items.size, items.lastOrNull()?.text?.length, working) {
             if (items.isNotEmpty()) listState.animateScrollToItem(items.lastIndex)
         }
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (items.isEmpty()) {
+            if (items.isEmpty() && !working) {
                 item {
                     Text(
                         "No turns yet - speak or type to start the session.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
-            items(items, key = { it.id }) { item -> TranscriptBubble(item) }
+            items(items, key = { it.id }) { item -> TurnBlock(item) }
+            if (working && state.transcript.lastOrNull()?.isStreaming != true) {
+                item { MetaRow(workingLabel(state.loopState)) }
+            }
         }
 
         // --- status + pinned input ---
-        LatencySummaryView(state.latencySummary)
         state.lastError?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
-        Text(state.statusMessage, style = MaterialTheme.typography.bodySmall)
+        Text(
+            state.statusMessage,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall,
+        )
 
         OutlinedTextField(
             value = state.typedText,
@@ -183,44 +195,79 @@ fun SessionHeader(
     }
 }
 
-/** One turn in the session timeline: user right-aligned, assistant left, tool chips inline. */
+/**
+ * One turn in the coding-agent document flow:
+ *  - USER: accent "❯" prefix + medium-weight text (the prompt line).
+ *  - ASSISTANT: muted monospace action rows for each tool run, plain prose paragraph, then a
+ *    muted meta line (latency) — like a Codex/Claude Code action transcript.
+ */
 @Composable
-fun TranscriptBubble(item: TranscriptItem) {
-    val isUser = item.role == TranscriptRole.USER
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-    ) {
-        Surface(
-            tonalElevation = if (isUser) 3.dp else 1.dp,
-            color = if (isUser) MaterialTheme.colorScheme.secondaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.widthIn(max = 320.dp),
-        ) {
-            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (item.tools.isNotEmpty()) {
-                    Text(
-                        "tools: " + item.tools.joinToString(", "),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                if (item.text.isNotBlank()) {
-                    Text(item.text, style = MaterialTheme.typography.bodyMedium)
-                }
-                if (item.interrupted) {
-                    val spoken = item.spokenContent.takeIf { it.isNotBlank() }
-                    Text(
-                        if (spoken != null) "interrupted - spoken: $spoken" else "interrupted",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                } else if (item.isStreaming) {
-                    Text("...", style = MaterialTheme.typography.labelSmall)
-                }
-            }
+fun TurnBlock(item: TranscriptItem) {
+    if (item.role == TranscriptRole.USER) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "\u276F ",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                item.text,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        return
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        item.tools.forEach { tool -> ActionRow(tool) }
+        if (item.text.isNotBlank()) {
+            Text(item.text, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (item.interrupted) {
+            val spoken = item.spokenContent.takeIf { it.isNotBlank() }
+            Text(
+                if (spoken != null) "\u2298 interrupted - spoken: \"$spoken\"" else "\u2298 interrupted",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        } else if (item.isStreaming) {
+            MetaRow("generating...")
+        }
+        if (item.meta.isNotBlank() && !item.isStreaming) {
+            MetaRow(item.meta)
         }
     }
+}
+
+/** Muted monospace action row, e.g. "✓ ran set_timer" — the Codex command-line look. */
+@Composable
+fun ActionRow(tool: String) {
+    val ok = tool.endsWith("(ok)")
+    val name = tool.removeSuffix("(ok)").removeSuffix("(failed)")
+    Text(
+        (if (ok) "\u2713" else "\u2717") + " ran " + name + if (ok) "" else " (failed)",
+        style = MaterialTheme.typography.bodySmall,
+        fontFamily = FontFamily.Monospace,
+        color = if (ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+    )
+}
+
+/** Muted single-line meta/status row ("thinking...", latency breakdowns). */
+@Composable
+fun MetaRow(label: String) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = FontFamily.Monospace,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun workingLabel(loopState: SpeechLoopUiState): String = when (loopState) {
+    SpeechLoopUiState.TRANSCRIBING -> "transcribing..."
+    SpeechLoopUiState.SPEAKING -> "speaking..."
+    else -> "thinking..."
 }
 
 /** Compact single-row readiness chips (horizontally scrollable). */

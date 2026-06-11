@@ -64,6 +64,8 @@ data class TranscriptItem(
     val spokenContent: String = "",
     /** Tools the agent ran for this turn, e.g. "set_timer(ok)". */
     val tools: List<String> = emptyList(),
+    /** Muted per-turn meta line (latency breakdown), rendered Codex-style under the turn. */
+    val meta: String = "",
 )
 
 data class LatencySummary(

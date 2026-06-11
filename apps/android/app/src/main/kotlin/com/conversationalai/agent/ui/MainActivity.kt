@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
                 interrupted = r.bargedIn,
                 spokenContent = r.spokenContent,
                 tools = r.toolsUsed,
+                meta = "asr ${r.asrMs}ms / TTFT ${r.ttftMs}ms / firstPCM ${r.firstPcmMs}ms / total ${r.totalMs}ms",
             )
         }
         latencyLine = "asr ${r.asrMs}ms / TTFT ${r.ttftMs}ms / firstPCM ${r.firstPcmMs}ms / total ${r.totalMs}ms"
