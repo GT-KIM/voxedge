@@ -55,7 +55,15 @@ Session/runtime:
 ASR/prompt:
 
 - `asr.final`
+- `asr.candidate` — early-checkpoint transcription (speculative turns, 2026-06-12).
 - `asr.no_speech`
+
+Speculative turns (2026-06-12, additive): the mic's early silence checkpoint (~250 ms) starts the
+turn with playback/tools gated until the real endpoint (~600 ms) confirms the transcript.
+
+- `speculation.start` — speculative turn launched from the candidate transcript.
+- `speculation.commit` — endpoint confirmed; `head_start_ms` = latency saved by starting early.
+- `speculation.cancel` — `reason`: `speech_resumed` | `transcript_mismatch`.
 - `turn.start`
 - `prompt.assembled` — includes `session_mode` (`warm` incremental KV continuation vs `full`
   transcript re-prefill), `context_occupancy_pct`, and `lang` since 2026-06-10.

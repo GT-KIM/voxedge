@@ -123,6 +123,9 @@ fun ConversationRoute(
             ConversationAction.ToggleConfirmActions -> {
                 settings = settingsController.toggleConfirmActions()
             }
+            ConversationAction.ToggleSpeculative -> {
+                settings = settingsController.toggleSpeculative()
+            }
             ConversationAction.SubmitTypedTurn -> {
                 onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
             }

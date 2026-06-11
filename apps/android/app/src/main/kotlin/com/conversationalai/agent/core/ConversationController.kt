@@ -73,6 +73,13 @@ class ConversationController(
     @Volatile var toolsEnabled = true
         private set
 
+    /** SPECULATIVE turns (settings): at the mic's early silence checkpoint (~250 ms) the turn
+     *  starts immediately — ASR, LLM prefill/decode, even TTS synthesis — while audible playback
+     *  and tool execution stay gated. When the real endpoint (~600 ms) confirms the same
+     *  transcript, the gate opens (the head start is pure saved latency); if the user resumes
+     *  speaking or the transcripts differ, the speculative work is cancelled via the epoch. */
+    @Volatile var speculativeEnabled = true
+
     fun setToolsEnabled(enabled: Boolean) {
         if (toolsEnabled == enabled) return
         toolsEnabled = enabled
@@ -133,6 +140,19 @@ class ConversationController(
     private var micStream: MicStream? = null
     private var utterances: Channel<FloatArray>? = null
     private var consumerJob: Job? = null
+
+    private class Speculation(
+        val gid: Long,
+        val text: String,
+        val asrMs: Long,
+        val startedAtNs: Long,
+        val gate: kotlinx.coroutines.CompletableDeferred<Unit>,
+    ) {
+        @Volatile var job: Job? = null
+        @Volatile var record: TurnRecord? = null
+    }
+
+    @Volatile private var speculation: Speculation? = null
     private val turnRunner = SpeechTurnRunner(
         llm = llm,
         tts = tts,
@@ -174,7 +194,13 @@ class ConversationController(
             onSpeechStart = { onSpeechStart() },
             // Barge-in off: only accept utterances detected while LISTENING (ignore turn-time mic /
             // TTS leakage). Barge-in on: accept always (the barge-in utterance becomes the next turn).
-            onUtterance = { s -> if (running && (bargeInEnabled || state == ConvState.LISTENING)) ch.trySend(s) },
+            onUtterance = { s ->
+                if (running && (bargeInEnabled || state == ConvState.LISTENING || speculation != null)) {
+                    ch.trySend(s)
+                }
+            },
+            // Early silence checkpoint -> start the turn speculatively (playback/tools gated).
+            onUtteranceCandidate = { s -> candidateUtterance(s) },
             // Pick the capture profile: barge-in needs the AEC/VOICE_COMMUNICATION path; otherwise use
             // the ASR-tuned VOICE_RECOGNITION source (no AEC/NS) for a cleaner signal to the recognizer.
             bargeIn = bargeInEnabled,
@@ -188,6 +214,7 @@ class ConversationController(
         eventLogger?.log("conversation.stop", attributes = mapOf("was_running" to running))
         running = false
         micStream?.stop(); micStream = null
+        speculation?.gate?.complete(Unit); speculation = null
         generationEpoch.cancel()             // invalidate any in-flight turn
         activePlayer?.interrupt()
         llm.abort()
@@ -196,9 +223,15 @@ class ConversationController(
         setState(ConvState.IDLE)
     }
 
-    /** Sustained speech onset (capture thread): if the assistant is responding, barge in — but
-     *  ignore the first [GRACE_MS] of SPEAKING (playback-onset / echo ramp) to avoid self-interrupt. */
+    /** Sustained speech onset (capture thread): if a SPECULATIVE turn is in flight the user kept
+     *  talking — cancel it (nothing was audible yet) and keep capturing. Otherwise, if the
+     *  assistant is audibly responding, barge in — but ignore the first [GRACE_MS] of SPEAKING
+     *  (playback-onset / echo ramp) to avoid self-interrupt. */
     private fun onSpeechStart() {
+        if (cancelSpeculation("speech_resumed")) {
+            setState(ConvState.CAPTURING)
+            return
+        }
         if (!bargeInEnabled) return       // experimental; off by default (no self-interruption)
         val speaking = state == ConvState.SPEAKING
         val generating = state == ConvState.GENERATING
@@ -215,9 +248,40 @@ class ConversationController(
         Log.i(TAG, "BARGE-IN")
     }
 
-    private suspend fun handleUtterance(samples: FloatArray) {
+    internal suspend fun handleUtterance(samples: FloatArray) {
         if (!running) return
         onUtteranceCaptured(samples)   // debug dump of the real captured signal (pre-denoise)
+        // A speculative turn may already be running for this utterance: confirm or discard it.
+        val spec = speculation
+        if (spec != null) {
+            speculation = null
+            if (generationEpoch.isCurrent(spec.gid)) {
+                val finalHeard = transcribeSamples(samples, event = "asr.final")
+                if (finalHeard != null && finalHeard.first.trim() == spec.text.trim()) {
+                    commitSpeculation(spec)
+                    return
+                }
+                // Transcript mismatch: kill the speculative turn, answer the REAL transcript.
+                generationEpoch.cancel()
+                llm.abort()
+                spec.gate.complete(Unit)
+                spec.job?.join()
+                eventLogger?.log(
+                    "speculation.cancel",
+                    generationId = spec.gid,
+                    attributes = mapOf("reason" to "transcript_mismatch"),
+                )
+                setState(ConvState.CAPTURING)
+                if (finalHeard == null) {
+                    if (running) setState(ConvState.LISTENING)
+                    return
+                }
+                runConfirmedTurn(finalHeard.first, finalHeard.second)
+                return
+            }
+            // Speculation was already cancelled (user resumed speaking): this utterance is the
+            // longer, authoritative one — handle it normally below.
+        }
         // Half-duplex (barge-in off): mute the mic for the whole turn so the assistant's own TTS
         // playback can't leak back in as the next utterance. (Barge-in on keeps the mic live.)
         if (!bargeInEnabled) micStream?.muted = true
@@ -227,10 +291,14 @@ class ConversationController(
             if (running) setState(ConvState.LISTENING)
             return
         }
-        onUserText(text.first)
-        val rec = generateAndSpeak(generationEpoch.next(), text.first, text.second) {
-            onAssistantDelta(it)
-        }
+        runConfirmedTurn(text.first, text.second)
+    }
+
+    /** The post-confirmation tail of a hands-free turn (shared by all paths). */
+    private suspend fun runConfirmedTurn(userText: String, asrMs: Long) {
+        if (!bargeInEnabled) micStream?.muted = true
+        onUserText(userText)
+        val rec = generateAndSpeak(generationEpoch.next(), userText, asrMs) { onAssistantDelta(it) }
         onTurn(rec)
         if (!bargeInEnabled) {
             kotlinx.coroutines.delay(TAIL_GUARD_MS)   // let the speaker's acoustic tail / reverb clear
@@ -239,10 +307,80 @@ class ConversationController(
         if (running) setState(ConvState.LISTENING)
     }
 
+    /** Open the gate of a confirmed speculative turn and finish it like a normal one. The time
+     *  between the early checkpoint and now is the turn's head start — pure saved latency. */
+    private suspend fun commitSpeculation(spec: Speculation) {
+        if (!bargeInEnabled) micStream?.muted = true   // mute BEFORE audio can start
+        eventLogger?.log(
+            "speculation.commit",
+            generationId = spec.gid,
+            attributes = mapOf("head_start_ms" to (System.nanoTime() - spec.startedAtNs) / 1_000_000),
+        )
+        spec.gate.complete(Unit)
+        spec.job?.join()
+        spec.record?.let { onTurn(it) }
+        if (!bargeInEnabled) {
+            kotlinx.coroutines.delay(TAIL_GUARD_MS)
+            micStream?.muted = false
+        }
+        if (running) setState(ConvState.LISTENING)
+    }
+
+    /** Mic early-checkpoint callback (capture thread): kick off a speculative turn. */
+    internal fun candidateUtterance(samples: FloatArray) {
+        if (!running || !speculativeEnabled) return
+        if (state != ConvState.LISTENING || speculation != null) return
+        scope.launch(Dispatchers.Default) { startSpeculation(samples) }
+    }
+
+    private suspend fun startSpeculation(samples: FloatArray) {
+        if (!running || speculation != null || state != ConvState.LISTENING) return
+        val heard = transcribeSamples(samples, event = "asr.candidate") ?: return
+        if (speculation != null || state != ConvState.LISTENING) return
+        val spec = Speculation(
+            gid = generationEpoch.next(),
+            text = heard.first,
+            asrMs = heard.second,
+            startedAtNs = System.nanoTime(),
+            gate = kotlinx.coroutines.CompletableDeferred(),
+        )
+        speculation = spec
+        eventLogger?.log(
+            "speculation.start",
+            generationId = spec.gid,
+            attributes = mapOf("text_chars" to spec.text.length, "asr_ms" to spec.asrMs),
+        )
+        onUserText(spec.text)
+        setState(ConvState.TRANSCRIBING)   // LISTENING -> TRANSCRIBING; the runner moves on
+        spec.job = scope.launch(Dispatchers.Default) {
+            spec.record = generateAndSpeak(spec.gid, spec.text, spec.asrMs, gate = { spec.gate.await() }) {
+                onAssistantDelta(it)
+            }
+        }
+    }
+
+    /** Cancel an in-flight speculative turn (user resumed speaking / stop). False if none. */
+    private fun cancelSpeculation(reason: String): Boolean {
+        val spec = speculation ?: return false
+        speculation = null
+        if (!generationEpoch.isCurrent(spec.gid)) return false
+        generationEpoch.cancel()
+        activePlayer?.interrupt()   // nothing audible yet (gate), but stop the player cleanly
+        llm.abort()
+        spec.gate.complete(Unit)    // release the gated consumer; the stale epoch ends it
+        eventLogger?.log(
+            "speculation.cancel",
+            generationId = spec.gid,
+            attributes = mapOf("reason" to reason),
+        )
+        Log.i(TAG, "speculation cancelled ($reason)")
+        return true
+    }
+
     // --- one-shot turn (typed / push-to-talk) ---
 
     suspend fun runTurn(userText: String, asrMs: Long = 0L, onDelta: (String) -> Unit): TurnRecord {
-        val rec = generateAndSpeak(generationEpoch.next(), userText, asrMs, onDelta)
+        val rec = generateAndSpeak(generationEpoch.next(), userText, asrMs, onDelta = onDelta)
         if (!running) setState(ConvState.IDLE)
         return rec
     }
@@ -251,6 +389,11 @@ class ConversationController(
 
     private fun transcribe(utterance: FloatArray): Pair<String, Long>? {
         setState(ConvState.TRANSCRIBING)
+        return transcribeSamples(utterance, event = "asr.final")
+    }
+
+    /** ASR without state-machine side effects (shared by the normal and speculative paths). */
+    private fun transcribeSamples(utterance: FloatArray, event: String): Pair<String, Long>? {
         val t0 = System.nanoTime()
         val (clean, sr) = enhancer?.enhance(utterance, 16000) ?: (utterance to 16000)
         val text = asr.transcribe(clean, sr)
@@ -265,7 +408,7 @@ class ConversationController(
             return null
         }
         eventLogger?.log(
-            event = "asr.final",
+            event = event,
             elapsedMs = asrMs,
             attributes = mapOf(
                 "asr_ms" to asrMs,
@@ -275,7 +418,7 @@ class ConversationController(
                 "asr_engine" to asr.name(),
             ),
         )
-        Log.i(TAG, "heard (${asrMs}ms): $text")
+        Log.i(TAG, "heard/$event (${asrMs}ms): $text")
         return text to asrMs
     }
 
@@ -283,6 +426,7 @@ class ConversationController(
         gid: Long,
         userText: String,
         asrMs: Long,
+        gate: (suspend () -> Unit)? = null,
         onDelta: (String) -> Unit,
     ): TurnRecord {
         eventLogger?.log(
@@ -353,7 +497,7 @@ class ConversationController(
                 "lang" to turnLang.name,
             ),
         )
-        val rec = turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled, rewindTurn)
+        val rec = turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled, rewindTurn, gate)
         // Record into history for multi-turn context (skip interrupted turns; cap recent turns).
         val replyText = rec.replyText.trim()
         if (!rec.bargedIn && replyText.isNotEmpty()) {
@@ -381,6 +525,13 @@ class ConversationController(
         Log.i(TAG, "rolling summary (${summary?.length ?: 0} chars): ${summary?.take(80)}")
         return summary
     }
+
+    // --- test hooks: JVM unit tests drive the mic-callback entry points directly ---
+    internal fun testEnterListening() {
+        running = true
+        setState(ConvState.LISTENING)
+    }
+    internal fun testSpeechOnset() = onSpeechStart()
 
     private fun setState(s: ConvState) {
         stateMachine.transitionTo(s)

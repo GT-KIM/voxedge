@@ -44,6 +44,10 @@ class SpeechTurnRunner(
         template: ChatTemplate = ChatTemplate.CHATML,
         useTools: Boolean = true,
         rewindFirstStep: Boolean = false,
+        // SPECULATIVE turns: suspends until the early transcript is confirmed by the real VAD
+        // endpoint. Generation and TTS synthesis run ahead freely; everything EXTERNALLY
+        // OBSERVABLE — audible playback and tool execution — waits here first.
+        gate: (suspend () -> Unit)? = null,
     ): TurnRecord = coroutineScope {
         val clauses = Channel<ClauseChunk>(Channel.UNLIMITED)
         val player = playerFactory()
@@ -113,6 +117,8 @@ class SpeechTurnRunner(
                         ),
                     )
                     if (!playbackStarted) {
+                        gate?.invoke()   // speculative turn: hold audio until the endpoint confirms
+                        if (!generationEpoch.isCurrent(gid)) break
                         playbackStarted = true
                         onSpeakingStarted()
                         onState(ConvState.SPEAKING)
@@ -217,8 +223,11 @@ class SpeechTurnRunner(
                     }
                     break
                 }
-                // Never execute tools for a cancelled (barged-in) generation.
+                // Never execute tools for a cancelled (barged-in) generation — and never for a
+                // speculative turn whose transcript hasn't been confirmed yet (gate).
                 if (result != LlmEngine.Result.OK || !generationEpoch.isCurrent(gid)) break
+                gate?.invoke()
+                if (!generationEpoch.isCurrent(gid)) break
                 if (step >= MAX_TOOL_STEPS) {
                     Log.w(TAG, "tool-step limit hit; dropping call '${call.name}'")
                     eventLogger?.log(

@@ -109,6 +109,14 @@ object PromptAssembler {
         sb.append(". You have NO built-in clock or device access: when the user asks about the ")
         sb.append("current time or date, the battery, or wants a timer, an alarm, or the ")
         sb.append("flashlight, you MUST call the matching tool instead of guessing or refusing. ")
+        // Korean trigger words spelled out explicitly: 4B-class models reliably map English
+        // requests to tools but often skip the tool on Korean phrasing without these anchors.
+        sb.append("This rule applies in EVERY language. Korean examples that REQUIRE a tool call: ")
+        sb.append("'\uC9C0\uAE08 \uBA87 \uC2DC' (get_datetime), '\uC2DC\uAC04' or '\uB0A0\uC9DC' ")
+        sb.append("(get_datetime), '\uD0C0\uC774\uBA38' (set_timer), '\uC54C\uB78C' (set_alarm), ")
+        sb.append("'\uBC30\uD130\uB9AC' (battery_status), '\uC190\uC804\uB4F1' (flashlight). ")
+        sb.append("Tool results go stale: for the CURRENT time, call get_datetime again on every ")
+        sb.append("time question instead of reusing an earlier answer. ")
         sb.append("When a tool_response arrives, answer the user naturally in their language; ")
         sb.append("never read JSON, tags, or tool syntax out loud.")
         return sb.toString()

@@ -96,6 +96,7 @@ data class SettingsUiState(
     val samplingOverridden: Boolean = false,
     val toolsEnabled: Boolean = true,
     val confirmActions: Boolean = false,
+    val speculativeTurns: Boolean = true,
     val restartRequired: Boolean = false,
 )
 

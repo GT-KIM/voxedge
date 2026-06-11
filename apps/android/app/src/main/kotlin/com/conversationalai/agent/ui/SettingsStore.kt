@@ -22,6 +22,7 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
         bargeIn = prefs.getBoolean(KEY_BARGE_IN, false),
         toolsEnabled = prefs.getBoolean(KEY_TOOLS_ENABLED, true),
         confirmActions = prefs.getBoolean(KEY_CONFIRM_ACTIONS, false),
+        speculativeTurns = prefs.getBoolean(KEY_SPECULATIVE, true),
     )
 
     override fun save(settings: AppSettings) {
@@ -36,6 +37,7 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
             putBoolean(KEY_BARGE_IN, settings.bargeIn)
             putBoolean(KEY_TOOLS_ENABLED, settings.toolsEnabled)
             putBoolean(KEY_CONFIRM_ACTIONS, settings.confirmActions)
+            putBoolean(KEY_SPECULATIVE, settings.speculativeTurns)
         }.apply()
     }
 
@@ -49,5 +51,6 @@ class PrefsSettingsStore(context: Context) : SettingsStore {
         const val KEY_BARGE_IN = "barge_in"
         const val KEY_TOOLS_ENABLED = "tools_enabled"
         const val KEY_CONFIRM_ACTIONS = "confirm_actions"
+        const val KEY_SPECULATIVE = "speculative_turns"
     }
 }

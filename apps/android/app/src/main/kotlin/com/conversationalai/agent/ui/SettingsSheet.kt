@@ -152,6 +152,17 @@ fun SettingsSheet(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(
+                    checked = settings.speculativeTurns,
+                    onCheckedChange = { onAction(ConversationAction.ToggleSpeculative) },
+                )
+                Text(
+                    "Fast response (speculative start at early silence)",
+                    modifier = Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
                     checked = bargeIn,
                     onCheckedChange = { onAction(ConversationAction.ToggleBargeIn) },
                 )

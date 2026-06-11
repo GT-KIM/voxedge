@@ -23,15 +23,22 @@ import com.k2fsa.sherpa.onnx.VadModelConfig
  *
  * Callbacks fire on the capture thread and MUST be fast/non-blocking:
  *  - [onSpeechStart] at speech ONSET — drives the fast barge-in (stop playback).
- *  - [onUtterance] with the full segment at endpoint — drives the next turn's ASR.
+ *  - [onUtteranceCandidate] at the EARLY endpoint checkpoint (~[candidateSilenceWindows] windows of
+ *    trailing silence, well before the VAD's 600 ms endpoint) with the utterance audio so far —
+ *    drives SPECULATIVE turns (the controller starts ASR+LLM early, gated until confirmation).
+ *  - [onUtterance] with the full segment at the real endpoint — the authoritative transcript.
  */
 class MicStream(
     private val vadModelPath: String,
     private val onSpeechStart: () -> Unit,
     private val onUtterance: (FloatArray) -> Unit,
+    private val onUtteranceCandidate: (FloatArray) -> Unit = {},
     // Fire onSpeechStart only after this many CONSECUTIVE speech windows (~32 ms each), so brief
     // AEC-residual / echo blips during the assistant's playback don't cause a false barge-in.
     private val onsetMinWindows: Int = 6,
+    // Early endpoint for the candidate VAD: ~350 ms before the 0.6 s authoritative endpoint.
+    // Each false fire (mid-utterance pause) costs one cancelled speculative turn.
+    private val candidateSilenceSeconds: Float = 0.25f,
     // Capture profile selector (see class doc): barge-in needs the open-mic AEC path; with it off we
     // prefer the cleaner ASR-tuned source. Fixed at start() — toggling barge-in restarts the mic.
     private val bargeIn: Boolean = false,
@@ -48,22 +55,28 @@ class MicStream(
 
     fun start(): Boolean {
         if (running) return true
-        val vad = try {
-            Vad(
-                config = VadModelConfig(
-                    sileroVadModelConfig = SileroVadModelConfig(
-                        model = vadModelPath, threshold = 0.5f, minSilenceDuration = 0.6f,
-                        minSpeechDuration = 0.25f, windowSize = window, maxSpeechDuration = 15f,
-                    ),
-                    sampleRate = sampleRate, numThreads = 1, provider = "cpu",
+        fun vadWith(minSilence: Float): Vad = Vad(
+            config = VadModelConfig(
+                sileroVadModelConfig = SileroVadModelConfig(
+                    model = vadModelPath, threshold = 0.5f, minSilenceDuration = minSilence,
+                    minSpeechDuration = 0.25f, windowSize = window, maxSpeechDuration = 15f,
                 ),
-            )
-        } catch (t: Throwable) { Log.e(TAG, "VAD init failed", t); return false }
+                sampleRate = sampleRate, numThreads = 1, provider = "cpu",
+            ),
+        )
+        val vad = try { vadWith(0.6f) } catch (t: Throwable) {
+            Log.e(TAG, "VAD init failed", t); return false
+        }
+        // Second VAD with a SHORT endpoint: its segments are the early candidates for
+        // speculative turns (same audio, ~350 ms earlier). Optional — failure just disables it.
+        val vadEarly = try { vadWith(candidateSilenceSeconds) } catch (t: Throwable) {
+            Log.w(TAG, "candidate VAD init failed (speculation disabled)", t); null
+        }
 
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         )
-        if (minBuf <= 0) { vad.release(); return false }
+        if (minBuf <= 0) { vad.release(); vadEarly?.release(); return false }
         // VOICE_RECOGNITION = ASR-tuned, minimal processing (clean signal for the recognizer);
         // VOICE_COMMUNICATION = VoIP path the platform AEC hooks into (needed only for open-mic barge-in).
         val source = if (bargeIn) {
@@ -77,10 +90,12 @@ class MicStream(
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, window * 4),
             )
         } catch (se: SecurityException) {
-            Log.e(TAG, "RECORD_AUDIO permission missing", se); vad.release(); return false
+            Log.e(TAG, "RECORD_AUDIO permission missing", se)
+            vad.release(); vadEarly?.release(); return false
         }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release(); vad.release(); Log.e(TAG, "AudioRecord not initialized"); return false
+            rec.release(); vad.release(); vadEarly?.release()
+            Log.e(TAG, "AudioRecord not initialized"); return false
         }
 
         // AEC/NS only when barge-in keeps the mic open during playback. With barge-in off the mic is
@@ -111,14 +126,26 @@ class MicStream(
                 val n = rec.read(sbuf, 0, window)
                 if (n <= 0) continue
                 if (muted) { wasMuted = true; continue }   // discard our own TTS / turn-time audio
-                if (wasMuted) { wasMuted = false; vad.reset(); speechRun = 0; firedOnset = false }
+                if (wasMuted) {
+                    wasMuted = false
+                    vad.reset(); vadEarly?.reset()
+                    speechRun = 0; firedOnset = false
+                }
                 for (i in 0 until n) fbuf[i] = sbuf[i] / 32768f
-                vad.acceptWaveform(if (n == window) fbuf else fbuf.copyOf(n))
+                val chunk = if (n == window) fbuf else fbuf.copyOf(n)
+                vad.acceptWaveform(chunk)
+                vadEarly?.acceptWaveform(chunk)
                 if (vad.isSpeechDetected()) {
                     speechRun++
                     if (speechRun >= onsetMinWindows && !firedOnset) { firedOnset = true; onSpeechStart() }
                 } else {
                     speechRun = 0; firedOnset = false
+                }
+                // Early endpoint: the short-silence VAD closes its segment ~350 ms before the
+                // authoritative one — that's the speculative-turn candidate.
+                while (vadEarly != null && !vadEarly.empty()) {
+                    val seg = vadEarly.front(); vadEarly.pop()
+                    onUtteranceCandidate(seg.samples)
                 }
                 while (!vad.empty()) {
                     val seg = vad.front(); vad.pop()
@@ -131,6 +158,7 @@ class MicStream(
             aec?.release()
             ns?.release()
             vad.release()
+            vadEarly?.release()
         }.also { it.start() }
         Log.i(TAG, "mic stream started")
         return true

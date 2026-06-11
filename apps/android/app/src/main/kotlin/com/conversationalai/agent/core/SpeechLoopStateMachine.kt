@@ -21,7 +21,10 @@ class SpeechLoopStateMachine(initialState: ConvState = ConvState.IDLE) {
                 ConvState.IDLE -> to == ConvState.LISTENING || to == ConvState.GENERATING
                 ConvState.LISTENING -> to == ConvState.CAPTURING || to == ConvState.TRANSCRIBING
                 ConvState.CAPTURING -> to == ConvState.TRANSCRIBING || to == ConvState.GENERATING
-                ConvState.TRANSCRIBING -> to == ConvState.GENERATING || to == ConvState.LISTENING
+                // CAPTURING from TRANSCRIBING: the user resumed speaking while a SPECULATIVE
+                // candidate was being transcribed — back to capturing the longer utterance.
+                ConvState.TRANSCRIBING ->
+                    to == ConvState.GENERATING || to == ConvState.LISTENING || to == ConvState.CAPTURING
                 ConvState.GENERATING -> to == ConvState.SPEAKING || to == ConvState.CAPTURING || to == ConvState.LISTENING
                 ConvState.SPEAKING -> to == ConvState.LISTENING || to == ConvState.CAPTURING
                 ConvState.RECOVERING -> to == ConvState.LISTENING

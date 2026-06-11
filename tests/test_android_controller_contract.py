@@ -36,7 +36,7 @@ class AndroidControllerContractTest(unittest.TestCase):
         runner = (CORE / "SpeechTurnRunner.kt").read_text(encoding="utf-8")
 
         self.assertIn("private val turnRunner = SpeechTurnRunner(", controller)
-        self.assertIn("turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled, rewindTurn)", controller)
+        self.assertIn("turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled, rewindTurn, gate)", controller)
         self.assertNotIn("val clauses = Channel<String>", controller)
         self.assertNotIn("val seg = ClauseSegmenter", controller)
         self.assertNotIn("player.write(pcm)", controller)

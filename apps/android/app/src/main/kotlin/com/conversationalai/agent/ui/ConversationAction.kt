@@ -30,6 +30,7 @@ sealed interface ConversationAction {
     data object ResetSampling : ConversationAction
     data object ToggleTools : ConversationAction
     data object ToggleConfirmActions : ConversationAction
+    data object ToggleSpeculative : ConversationAction
 
     data object RunDebugSpeak : ConversationAction
     data object RunDebugAskLlm : ConversationAction

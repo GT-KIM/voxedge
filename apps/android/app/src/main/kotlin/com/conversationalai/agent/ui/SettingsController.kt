@@ -26,6 +26,7 @@ class SettingsController(
         controller.bargeInEnabled = settings.bargeIn
         controller.setToolsEnabled(settings.toolsEnabled)
         controller.setConfirmActions(settings.confirmActions)
+        controller.speculativeEnabled = settings.speculativeTurns
     }
 
     fun uiState(): SettingsUiState {
@@ -49,6 +50,7 @@ class SettingsController(
             samplingOverridden = settings.hasSamplingOverride,
             toolsEnabled = settings.toolsEnabled,
             confirmActions = settings.confirmActions,
+            speculativeTurns = settings.speculativeTurns,
             restartRequired = selectedId != activeModel.id,
         )
     }
@@ -90,6 +92,12 @@ class SettingsController(
     fun toggleConfirmActions(): SettingsUiState {
         update(settings.copy(confirmActions = !settings.confirmActions))
         controller.setConfirmActions(settings.confirmActions)
+        return uiState()
+    }
+
+    fun toggleSpeculative(): SettingsUiState {
+        update(settings.copy(speculativeTurns = !settings.speculativeTurns))
+        controller.speculativeEnabled = settings.speculativeTurns
         return uiState()
     }
 

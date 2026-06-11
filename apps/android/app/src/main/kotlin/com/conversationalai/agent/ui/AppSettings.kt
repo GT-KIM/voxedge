@@ -19,6 +19,8 @@ data class AppSettings(
     val toolsEnabled: Boolean = true,
     /** Side-effecting tools (timer/alarm/flashlight) require a spoken user confirmation. */
     val confirmActions: Boolean = false,
+    /** Start turns speculatively at the early silence checkpoint (playback/tools gated). */
+    val speculativeTurns: Boolean = true,
 ) {
     val hasSamplingOverride: Boolean get() = temp != null || topK != null || topP != null
 

@@ -93,6 +93,13 @@ class OfflineAsr(
         r.decode(stream)
         val text = r.getResult(stream).text
         stream.release()
+        if (!scriptConsistent(text, language)) {
+            // Multilingual backends (Dolphin covers ~40 languages) hallucinate foreign scripts
+            // on unclear audio (observed: Cyrillic/Chinese for Korean speech). A transcript whose
+            // letters are mostly outside the configured language's script is noise — drop it.
+            Log.i(TAG, "rejected foreign-script transcript (lang=$language): \"$text\"")
+            return ""
+        }
         return text
     }
 
@@ -103,5 +110,23 @@ class OfflineAsr(
 
     companion object {
         private const val TAG = "OfflineAsr"
+
+        /** True when [text]'s letters are predominantly in [language]'s expected scripts.
+         *  KO accepts Hangul plus embedded Latin words; EN expects Latin. Pure; JVM-tested. */
+        fun scriptConsistent(text: String, language: String): Boolean {
+            var hangul = 0
+            var latin = 0
+            var other = 0
+            for (c in text) {
+                when {
+                    c in '\uAC00'..'\uD7A3' || c in '\u1100'..'\u11FF' || c in '\u3130'..'\u318F' -> hangul++
+                    c in 'A'..'Z' || c in 'a'..'z' -> latin++
+                    c.isLetter() -> other++   // CJK ideographs, kana, Cyrillic, ...
+                }
+            }
+            val native = if (language == "ko") hangul + latin else latin
+            val foreign = if (language == "ko") other else other + hangul
+            return foreign <= native
+        }
     }
 }

@@ -26,6 +26,7 @@ enum ConversationAction: Equatable {
     case resetSampling
     case toggleTools
     case toggleConfirmActions
+    case toggleSpeculative
     case runDebugSpeak
     case runDebugAskLlm
     case runDebugConverse
