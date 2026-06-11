@@ -44,6 +44,7 @@ class SettingsController(
             temp = sampling.temp,
             topK = sampling.topK,
             topP = sampling.topP,
+            maxResponseTokens = settings.maxResponseTokens ?: LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS,
             samplingOverridden = settings.hasSamplingOverride,
             toolsEnabled = settings.toolsEnabled,
             restartRequired = selectedId != activeModel.id,
@@ -61,6 +62,13 @@ class SettingsController(
     fun setSampling(temp: Float, topK: Int, topP: Float): SettingsUiState {
         update(settings.copy(temp = temp, topK = topK, topP = topP))
         llm.setSampling(settings.effectiveSampling(activeModel.sampling))
+        return uiState()
+    }
+
+    /** Persist + apply the per-turn generation cap to the live engine. */
+    fun setMaxResponseTokens(maxTokens: Int): SettingsUiState {
+        update(settings.copy(maxResponseTokens = maxTokens))
+        llm.setMaxResponseTokens(maxTokens)
         return uiState()
     }
 

@@ -1,0 +1,17 @@
+{
+  "description": "Standing LLM eval battery for tools/llm/eval_turns.py. Keep prompts stable across runs so A/B comparisons stay meaningful; add new prompts at the END with new ids.",
+  "prompts": [
+    {"id": "en-greet", "kind": "chat", "text": "hello there, how are you today?"},
+    {"id": "en-fact", "kind": "chat", "text": "tell me one fun fact about the moon"},
+    {"id": "en-advice", "kind": "chat", "text": "how do I make my morning routine better?"},
+    {"id": "en-opinion", "kind": "chat", "text": "which is better for focus, coffee or tea?"},
+    {"id": "ko-greet", "kind": "chat", "text": "안녕, 오늘 하루 어땠어?"},
+    {"id": "ko-fact", "kind": "chat", "text": "고래에 대한 재미있는 사실 하나 알려줘"},
+    {"id": "ko-advice", "kind": "chat", "text": "잠을 잘 자려면 어떻게 해야 해?"},
+    {"id": "tool-time", "kind": "tool", "expect_tool": "get_datetime", "text": "what time is it right now?"},
+    {"id": "tool-battery", "kind": "tool", "expect_tool": "battery_status", "text": "how much battery do I have left?"},
+    {"id": "tool-time-ko", "kind": "tool", "expect_tool": "get_datetime", "text": "지금 몇 시야?"},
+    {"id": "tool-timer", "kind": "tool", "expect_tool": "set_timer", "side_effect": true, "text": "set a timer for 2 minutes"},
+    {"id": "tool-flash", "kind": "tool", "expect_tool": "flashlight", "side_effect": true, "text": "turn on the flashlight"}
+  ]
+}

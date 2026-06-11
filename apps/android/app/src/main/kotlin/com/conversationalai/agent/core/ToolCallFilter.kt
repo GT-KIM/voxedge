@@ -28,6 +28,11 @@ class ToolCallFilter(private val onText: (String) -> Unit) {
     var call: ToolCall? = null
         private set
 
+    /** A [OPEN] block arrived but didn't parse as a tool call (bad JSON or unterminated at stream
+     *  end). The agentic loop uses this to send the model one corrective retry. */
+    var malformed = false
+        private set
+
     fun accept(chunk: String) {
         if (call != null) return   // post-call text is dropped (one call per step)
         buf.append(chunk)
@@ -36,6 +41,7 @@ class ToolCallFilter(private val onText: (String) -> Unit) {
 
     /** Flush at stream end: release held-back text that turned out not to be a marker. */
     fun finish() {
+        if (inCall) malformed = true   // unterminated block: dropped, never spoken
         if (call == null && !inCall && buf.isNotEmpty()) {
             onText(buf.toString())
         }
@@ -48,6 +54,7 @@ class ToolCallFilter(private val onText: (String) -> Unit) {
                 val end = buf.indexOf(CLOSE)
                 if (end < 0) return   // wait for the rest of the block
                 call = ToolCallParser.parse(buf.substring(0, end))
+                if (call == null) malformed = true
                 buf.setLength(0)
                 inCall = false
                 return                // one call per step; trailing text is dropped via accept()

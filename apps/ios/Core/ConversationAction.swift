@@ -17,6 +17,7 @@ enum ConversationAction: Equatable {
     case closeSettings
     case selectLlmModel(String)
     case setSampling(Double, Int, Double)
+    case setMaxResponseTokens(Int)
     case resetSampling
     case toggleTools
     case runDebugSpeak

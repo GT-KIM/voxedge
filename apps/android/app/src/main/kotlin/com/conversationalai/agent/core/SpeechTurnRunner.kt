@@ -43,6 +43,7 @@ class SpeechTurnRunner(
         onDelta: (String) -> Unit,
         template: ChatTemplate = ChatTemplate.CHATML,
         useTools: Boolean = true,
+        rewindFirstStep: Boolean = false,
     ): TurnRecord = coroutineScope {
         val clauses = Channel<ClauseChunk>(Channel.UNLIMITED)
         val player = playerFactory()
@@ -170,8 +171,8 @@ class SpeechTurnRunner(
             while (true) {
                 step += 1
                 val filter = if (toolLoop) ToolCallFilter(onText = emitText) else null
-                result = llm.generate(stepPrompt) { tok ->
-                    if (!generationEpoch.isCurrent(gid)) return@generate
+                val onLlmToken = fun(tok: String) {
+                    if (!generationEpoch.isCurrent(gid)) return
                     if (ttftMs == 0L) {
                         ttftMs = elapsedSince(t0)
                         eventLogger?.log(
@@ -183,8 +184,36 @@ class SpeechTurnRunner(
                     }
                     if (filter != null) filter.accept(tok) else emitText(tok)
                 }
+                // The first step of a re-prefill turn may rewind: KV prefix-match against the
+                // full transcript instead of prefilling from an empty cache.
+                result = if (step == 1 && rewindFirstStep) {
+                    llm.generateRewind(stepPrompt, onLlmToken)
+                } else {
+                    llm.generate(stepPrompt, onLlmToken)
+                }
                 filter?.finish()
-                val call = filter?.call ?: break
+                val call = filter?.call
+                if (call == null) {
+                    // One corrective retry when the model attempted a tool call but the JSON was
+                    // malformed/unterminated (small models do this): tell it, on the warm session.
+                    if (filter?.malformed == true && step < MAX_TOOL_STEPS &&
+                        result == LlmEngine.Result.OK && generationEpoch.isCurrent(gid)
+                    ) {
+                        eventLogger?.log(
+                            event = "tool.malformed_retry",
+                            generationId = gid,
+                            elapsedMs = elapsedSince(t0),
+                            attributes = mapOf("step" to step),
+                        )
+                        stepPrompt = template.toolResponse(
+                            "Your tool call was malformed. Either write one complete valid call " +
+                                "as [TOOL_CALL]{\"name\": \"tool_name\", \"arguments\": {...}}" +
+                                "[/TOOL_CALL] or answer the user directly in plain text.",
+                        )
+                        continue
+                    }
+                    break
+                }
                 // Never execute tools for a cancelled (barged-in) generation.
                 if (result != LlmEngine.Result.OK || !generationEpoch.isCurrent(gid)) break
                 if (step >= MAX_TOOL_STEPS) {

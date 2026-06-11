@@ -96,6 +96,10 @@ fun ConversationRoute(
                 settings = settingsController.setSampling(action.temp, action.topK, action.topP)
                 msg = "sampling: temp=%.2f top-k=%d top-p=%.2f".format(action.temp, action.topK, action.topP)
             }
+            is ConversationAction.SetMaxResponseTokens -> {
+                settings = settingsController.setMaxResponseTokens(action.maxTokens)
+                msg = "max response tokens: ${action.maxTokens}"
+            }
             ConversationAction.ResetSampling -> {
                 settings = settingsController.resetSampling()
                 msg = "sampling reset to model defaults"

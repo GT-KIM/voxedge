@@ -44,6 +44,7 @@ class SettingsControllerTest {
 
     private class FakeLlm : LlmEngine {
         var sampling: LlmSampling? = null
+        var maxTokens: Int? = null
         var resets = 0
         override fun name() = "fake"
         override fun generate(prompt: String, onToken: (String) -> Unit) = LlmEngine.Result.OK
@@ -52,6 +53,10 @@ class SettingsControllerTest {
         override fun resetSession() { resets += 1 }
         override fun setSampling(sampling: LlmSampling): Boolean {
             this.sampling = sampling
+            return true
+        }
+        override fun setMaxResponseTokens(maxTokens: Int): Boolean {
+            this.maxTokens = maxTokens
             return true
         }
     }
@@ -138,6 +143,21 @@ class SettingsControllerTest {
         assertEquals(LlmCatalog.QWEN3_4B_GENIE.sampling, llm.sampling)
         assertFalse(reset.samplingOverridden)
         assertEquals(null, store.stored.temp)
+    }
+
+    @Test
+    fun maxResponseTokensAppliesLiveAndPersists() {
+        val store = MemoryStore()
+        val llm = FakeLlm()
+        val c = controller(store = store, llm = llm)
+
+        // Default surfaces when nothing is stored.
+        assertEquals(LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS, c.uiState().maxResponseTokens)
+
+        val state = c.setMaxResponseTokens(200)
+        assertEquals(200, state.maxResponseTokens)
+        assertEquals(200, llm.maxTokens)
+        assertEquals(200, store.stored.maxResponseTokens)
     }
 
     @Test

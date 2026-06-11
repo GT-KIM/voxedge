@@ -82,6 +82,10 @@ class ConversationController(
     // Output language pinned into the live LLM session's system prompt (null = no session yet).
     // A turn in a different language forces a session re-prefill with the matching system prompt.
     private var sessionLang: PromptAssembler.Lang? = null
+    // Rolling conversation summary (config: llm.rolling_summary_tokens). Generated right before an
+    // occupancy-driven eviction re-prefill, then carried in the system prompt so long sessions keep
+    // continuity after old turns leave both the KV cache and the transcript window.
+    private var rollingSummary: String? = null
     @Volatile private var running = false
     private val stateMachine = SpeechLoopStateMachine()
     @Volatile private var speakingSinceNs = 0L   // when SPEAKING began (for the barge-in grace window)
@@ -113,6 +117,7 @@ class ConversationController(
         if (running) return
         running = true
         history.clear()   // fresh conversation
+        rollingSummary = null
         llm.resetSession(); sessionLang = null   // KV session mirrors the transcript lifecycle
         eventLogger?.log("conversation.start", attributes = mapOf("barge_in_enabled" to bargeInEnabled))
         val ch = Channel<FloatArray>(Channel.UNLIMITED)
@@ -264,12 +269,28 @@ class ConversationController(
         } else {
             emptyList()
         }
+        // Re-prefill strategy: rewind-capable engines keep their KV and prefix-match the full
+        // transcript (only the divergence is re-prefilled — e.g. a dropped barged-in turn);
+        // others reset and prefill from scratch. Rewind needs something IN the cache to match
+        // (occupancy > 0); a cold start prefills plainly.
+        val rewindTurn = !warmTurn && llm.sessionCapable && llm.supportsRewind && occupancy > 0
+        // Occupancy-driven eviction: distill the old turns into a rolling summary on the still-warm
+        // session BEFORE they are dropped, then keep only the freshest turns in the transcript.
+        if (!warmTurn && llm.sessionCapable && llm.sessionWarm() &&
+            occupancy >= LlmSessionPolicy.MAX_OCCUPANCY_PERCENT
+        ) {
+            summarizeSession(gid)?.let { summary ->
+                rollingSummary = summary
+                while (history.size > SUMMARY_KEEP_TURNS) history.removeFirst()
+            }
+        }
         val prompt = if (warmTurn) {
             template.incremental(userText)
         } else {
-            if (llm.sessionCapable) llm.resetSession()
+            if (llm.sessionCapable && !rewindTurn) llm.resetSession()
             sessionLang = turnLang
-            val system = PromptAssembler.systemPrompt(lang = turnLang, userSample = userText, tools = toolSpecs)
+            val base = PromptAssembler.systemPrompt(lang = turnLang, userSample = userText, tools = toolSpecs)
+            val system = rollingSummary?.let { "$base Summary of the conversation so far: $it" } ?: base
             llm.setSystemPrompt(system)   // "raw" engines apply this on session (re)creation
             template.full(system, history.toList(), userText)
         }
@@ -279,12 +300,12 @@ class ConversationController(
             attributes = mapOf(
                 "prompt_chars" to prompt.length,
                 "history_turns" to history.size,
-                "session_mode" to if (warmTurn) "warm" else "full",
+                "session_mode" to if (warmTurn) "warm" else if (rewindTurn) "rewind" else "full",
                 "context_occupancy_pct" to occupancy,
                 "lang" to turnLang.name,
             ),
         )
-        val rec = turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled)
+        val rec = turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled, rewindTurn)
         // Record into history for multi-turn context (skip interrupted turns; cap recent turns).
         val replyText = rec.replyText.trim()
         if (!rec.bargedIn && replyText.isNotEmpty()) {
@@ -293,6 +314,24 @@ class ConversationController(
         }
         Log.i(TAG, "turn gid=$gid asr=${asrMs}ms TTFT=${rec.ttftMs}ms firstPCM=${rec.firstPcmMs}ms total=${rec.totalMs}ms bargedIn=${rec.bargedIn} hist=${history.size}")
         return rec
+    }
+
+    /** One quiet generation on the still-warm session distilling the conversation so far.
+     *  Never spoken; bounded by the engine's max-response-tokens cap. Null on failure. */
+    private fun summarizeSession(gid: Long): String? {
+        val template = ChatTemplate.fromId(llm.chatTemplateId())
+        val sb = StringBuilder()
+        val t0 = System.nanoTime()
+        val result = llm.generate(template.incremental(SUMMARY_PROMPT)) { sb.append(it) }
+        val summary = sb.toString().trim().takeIf { it.isNotEmpty() && result == com.conversationalai.agent.llm.LlmEngine.Result.OK }
+        eventLogger?.log(
+            event = "session.summary",
+            generationId = gid,
+            elapsedMs = (System.nanoTime() - t0) / 1_000_000,
+            attributes = mapOf("ok" to (summary != null), "chars" to (summary?.length ?: 0)),
+        )
+        Log.i(TAG, "rolling summary (${summary?.length ?: 0} chars): ${summary?.take(80)}")
+        return summary
     }
 
     private fun setState(s: ConvState) {
@@ -308,5 +347,9 @@ class ConversationController(
         private const val GRACE_MS = 300L      // ignore barge-in this long after SPEAKING starts
         private const val TAIL_GUARD_MS = 350L // half-duplex: keep mic muted this long after playback
         private const val MAX_HISTORY_TURNS = 6   // recent turns kept for context (within ctx 4096)
+        private const val SUMMARY_KEEP_TURNS = 2  // turns kept verbatim once a rolling summary exists
+        private const val SUMMARY_PROMPT =
+            "Summarize our conversation so far in two or three short sentences, in the language " +
+                "we have been speaking. Mention names, decisions, and open questions. Plain text only."
     }
 }

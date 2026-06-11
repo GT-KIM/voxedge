@@ -22,6 +22,7 @@ class GenieLlm : LlmEngine {
 
     private var handle: Long = 0L
     @Volatile private var warm = false
+    @Volatile private var rewindBroken = false
 
     /** SAM bridge the native query callback invokes per response chunk. */
     fun interface TokenSink {
@@ -30,10 +31,11 @@ class GenieLlm : LlmEngine {
 
     private external fun nativeVersion(): String
     private external fun nativeInit(bundleDir: String): Long
-    private external fun nativeGenerate(handle: Long, prompt: String, sink: TokenSink): Int
+    private external fun nativeGenerate(handle: Long, prompt: String, sink: TokenSink, rewind: Boolean): Int
     private external fun nativeReset(handle: Long)
     private external fun nativeContextOccupancy(handle: Long): Int
     private external fun nativeSetSampling(handle: Long, temp: Float, topK: Int, topP: Float): Boolean
+    private external fun nativeSetMaxTokens(handle: Long, maxTokens: Int): Boolean
     private external fun nativeAbort(handle: Long)
     private external fun nativeRelease(handle: Long)
 
@@ -51,12 +53,39 @@ class GenieLlm : LlmEngine {
      * [prompt] must already be ChatML-formatted (see PromptAssembler): the full transcript on a
      * cold session, or only the new user turn on a warm one. Streams decoded text.
      */
-    override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+    override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result =
+        runQuery(prompt, rewind = false, onToken = onToken)
+
+    override val supportsRewind: Boolean get() = !rewindBroken
+
+    /** KV$ prefix-match rewind (SDK tutorial): pass the FULL transcript; Genie rewinds the cache
+     *  to the shared prefix and prefills only the difference. Requires the SMART_MASK KV update
+     *  method — bundles with POINTER_SHIFT weight-shared bins reject it (QUERY_FAILED -6,
+     *  observed with the Qwen3 w4a16 bundle). SELF-HEALING: a rewind that fails before emitting
+     *  any token disables rewind for this process and retries the same prompt as a plain
+     *  reset+prefill, so the user's turn still completes. */
+    override fun generateRewind(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+        if (rewindBroken) {
+            resetSession()
+            return runQuery(prompt, rewind = false, onToken = onToken)
+        }
+        var emitted = false
+        val result = runQuery(prompt, rewind = true) { text -> emitted = true; onToken(text) }
+        if (result != LlmEngine.Result.OK && !emitted) {
+            Log.w(TAG, "rewind failed ($result) with no output; disabling rewind, retrying plain")
+            rewindBroken = true
+            resetSession()
+            return runQuery(prompt, rewind = false, onToken = onToken)
+        }
+        return result
+    }
+
+    private fun runQuery(prompt: String, rewind: Boolean, onToken: (String) -> Unit): LlmEngine.Result {
         check(handle != 0L) { "GenieLlm not initialized" }
         val status = nativeGenerate(handle, prompt, TokenSink { text, _ ->
             // Genie omits the special/stop tokens from the response text; forward what it emits.
             if (text.isNotEmpty()) onToken(text)
-        })
+        }, rewind)
         val result = when (status) {
             0 -> LlmEngine.Result.OK
             1 -> LlmEngine.Result.CONTEXT_EXCEEDED
@@ -99,6 +128,9 @@ class GenieLlm : LlmEngine {
         Log.i(TAG, "setSampling temp=${sampling.temp} topK=${sampling.topK} topP=${sampling.topP} ok=$ok")
         return ok
     }
+
+    override fun setMaxResponseTokens(maxTokens: Int): Boolean =
+        handle != 0L && nativeSetMaxTokens(handle, maxTokens)
 
     override fun chatTemplateId(): String = "chatml"
 

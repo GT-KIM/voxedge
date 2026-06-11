@@ -74,7 +74,29 @@ class ConversationControllerSessionTest {
         llm.occupancy = LlmSessionPolicy.MAX_OCCUPANCY_PERCENT
         controller.runTurn("turn two") {}
 
-        assertTrue(llm.prompts[1].startsWith("<|im_start|>system\n"))
+        // The eviction path first distills a rolling summary on the warm session, then
+        // re-prefills with the summary folded into the system prompt.
+        assertEquals(3, llm.prompts.size)
+        assertTrue(llm.prompts[1].contains("Summarize our conversation"))
+        assertTrue(llm.prompts[2].startsWith("<|im_start|>system\n"))
+        assertTrue(llm.prompts[2].contains("Summary of the conversation so far: ok."))
+    }
+
+    @Test
+    fun rewindCapableEngineReprefillsViaRewindWithoutReset() = runBlocking {
+        val llm = FakeRewindLlm()
+        val controller = controller(llm)
+
+        controller.runTurn("hello there") {}        // cold start, empty KV -> plain reset+prefill
+        llm.coldNextTurn = true
+        controller.runTurn("gets interrupted") {}   // warm incremental; ends ABORTED (session cold)
+        controller.runTurn("after the abort") {}    // KV has content -> rewind re-prefill
+
+        // The post-abort re-prefill goes through generateRewind with the FULL transcript and no
+        // session reset (the engine prefix-matches its KV instead of prefilling from scratch).
+        assertEquals(listOf("plain", "plain", "rewind"), llm.modes)
+        assertTrue(llm.prompts[2].startsWith("<|im_start|>system\n"))
+        assertEquals(1, llm.resets)   // only the cold start resets
     }
 
     @Test
@@ -158,6 +180,34 @@ class ConversationControllerSessionTest {
         override fun sessionWarm() = warm
         override fun resetSession() { warm = false }
         override fun contextOccupancyPercent() = occupancy
+    }
+
+    private class FakeRewindLlm : LlmEngine {
+        val prompts = mutableListOf<String>()
+        val modes = mutableListOf<String>()
+        var resets = 0
+        var coldNextTurn = false
+        private var warm = false
+
+        override fun name() = "fake-rewind-llm"
+        override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+            prompts += prompt; modes += "plain"; onToken("ok."); return finish()
+        }
+        override fun generateRewind(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+            prompts += prompt; modes += "rewind"; onToken("ok."); return finish()
+        }
+        private fun finish(): LlmEngine.Result {
+            warm = !coldNextTurn
+            coldNextTurn = false
+            return if (warm) LlmEngine.Result.OK else LlmEngine.Result.ABORTED
+        }
+        override fun abort() { warm = false }
+        override val sessionCapable: Boolean get() = true
+        override val supportsRewind: Boolean get() = true
+        override fun sessionWarm() = warm
+        override fun resetSession() { resets += 1; warm = false }
+        // Empty before the first turn; afterwards the KV holds content rewind can match against.
+        override fun contextOccupancyPercent() = if (prompts.isEmpty()) 0 else 10
     }
 
     private class FakeRawSessionLlm : LlmEngine {

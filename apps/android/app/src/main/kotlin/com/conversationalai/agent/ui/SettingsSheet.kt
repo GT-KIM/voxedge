@@ -110,6 +110,22 @@ fun SettingsSheet(
                 }
             }
 
+            var maxTok by remember(settings.maxResponseTokens) {
+                mutableIntStateOf(settings.maxResponseTokens)
+            }
+            Text(
+                "max response tokens: $maxTok (~${maxTok / 30} sentences)",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = maxTok.toFloat(),
+                onValueChange = { maxTok = (it.toInt() / 10) * 10 },
+                onValueChangeFinished = {
+                    onAction(ConversationAction.SetMaxResponseTokens(maxTok))
+                },
+                valueRange = 40f..400f,
+            )
+
             // --- Conversation ---
             Text("Conversation", style = MaterialTheme.typography.titleSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {

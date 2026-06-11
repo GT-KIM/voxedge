@@ -88,6 +88,7 @@ data class SettingsUiState(
     val temp: Float = 0.6f,
     val topK: Int = 20,
     val topP: Float = 0.8f,
+    val maxResponseTokens: Int = 120,
     val samplingOverridden: Boolean = false,
     val toolsEnabled: Boolean = true,
     val restartRequired: Boolean = false,

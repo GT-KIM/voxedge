@@ -19,6 +19,7 @@ sealed interface ConversationAction {
     data object CloseSettings : ConversationAction
     data class SelectLlmModel(val modelId: String) : ConversationAction
     data class SetSampling(val temp: Float, val topK: Int, val topP: Float) : ConversationAction
+    data class SetMaxResponseTokens(val maxTokens: Int) : ConversationAction
     data object ResetSampling : ConversationAction
     data object ToggleTools : ConversationAction
 

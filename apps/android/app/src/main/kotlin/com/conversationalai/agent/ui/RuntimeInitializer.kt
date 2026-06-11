@@ -126,6 +126,7 @@ class RuntimeInitializer(private val context: Context) {
         }
         // Catalog sampling with any persisted user overrides (settings UI) on top.
         val sampling = settings.effectiveSampling(spec.sampling)
+        val maxTokens = settings.maxResponseTokens ?: LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS
         return when (spec.backend) {
             LlmBackend.GENIE -> {
                 val llm = GenieLlm()
@@ -134,6 +135,7 @@ class RuntimeInitializer(private val context: Context) {
                 // Non-fatal if the runtime rejects it — generation then keeps the
                 // genie_config.json sampler values.
                 if (ok && !llm.setSampling(sampling)) Log.w(TAG, "sampling not applied")
+                if (ok && !llm.setMaxResponseTokens(maxTokens)) Log.w(TAG, "max-tokens cap not applied")
                 llm to ok
             }
             LlmBackend.LITERT -> {
@@ -142,6 +144,9 @@ class RuntimeInitializer(private val context: Context) {
                     modelPath = path.absolutePath,
                     cacheDir = context.cacheDir.absolutePath,
                     sampling = sampling,
+                    // NPU spike (2026-06-11): Backend.NPU fails NOT_FOUND on the generic
+                    // .litertlm — it needs an NPU-specific model variant. GPU stays the default.
+                    preferNpu = false,
                 )
                 Log.i(TAG, if (ok) "LLM ready: ${llm.name()}" else "LiteRT-LM init failed (see logcat)")
                 llm to ok

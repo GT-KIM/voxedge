@@ -37,6 +37,20 @@ interface LlmEngine {
     /** Signal an in-flight [generate] to stop early. No-op if the engine is idle. */
     fun abort()
 
+    /** Whether [generateRewind] prefix-matches against the live KV cache. */
+    val supportsRewind: Boolean get() = false
+
+    /**
+     * Like [generate] with a FULL transcript prompt, but instead of requiring a fresh session the
+     * engine rewinds its KV cache to the longest shared prefix and prefills only the divergence
+     * (e.g. dropping a barged-in turn's partial reply costs ~one user block, not the transcript).
+     * Engines without rewind support fall back to reset + plain generate.
+     */
+    fun generateRewind(prompt: String, onToken: (String) -> Unit): Result {
+        resetSession()
+        return generate(prompt, onToken)
+    }
+
     /** Whether this engine keeps KV state across [generate] calls. */
     val sessionCapable: Boolean get() = false
 
@@ -53,6 +67,10 @@ interface LlmEngine {
     /** Apply new sampling parameters; returns false if unsupported or the engine rejected them. */
     fun setSampling(sampling: LlmSampling): Boolean = false
 
+    /** Cap generated tokens per turn (spoken-UX/latency bound; see shared config
+     *  llm.max_response_tokens). Returns false if unsupported. */
+    fun setMaxResponseTokens(maxTokens: Int): Boolean = false
+
     /**
      * Chat-format id the caller renders prompts with (see core/ChatTemplate): "chatml", "gemma",
      * or "raw" for engines that apply their own template and expect plain user text.
@@ -65,4 +83,10 @@ interface LlmEngine {
 
     /** Free engine resources. Safe to call more than once. */
     fun release() {}
+
+    companion object {
+        /** Default per-turn generation cap (config schema llm.max_response_tokens): ~120 tokens
+         *  is a few spoken sentences at ~22 tok/s; a hard bound on runaway-answer latency/heat. */
+        const val DEFAULT_MAX_RESPONSE_TOKENS = 120
+    }
 }

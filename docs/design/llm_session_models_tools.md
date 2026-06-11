@@ -96,6 +96,48 @@ Next steps on this foundation: LiteRT-LM's native `tools`/`automaticToolCalling`
 path; richer tools (notes, calendar, media, app launch); user confirmation policy for
 destructive/outward actions; multi-call steps.
 
+## 4. Follow-up track (2026-06-11): measurement + latency/quality levers
+
+- **Eval harness** (`tools/llm/eval_turns.py` + `eval_prompts.json`): drives the standing KO/EN +
+  tool-task battery through the `debug_typed_turn` adb hook, joins logcat replies with the JSONL
+  event log, and emits a markdown report (TTFT/first-PCM/total per turn, session_mode, tool
+  success rate, reply text). The measurement backbone for every model/sampling/prompt A/B.
+- **Response cap**: `GenieDialog_setMaxNumTokens` wired as `LlmEngine.setMaxResponseTokens`
+  (default 120 = config `llm.max_response_tokens`), persisted + live-adjustable in settings.
+  Bounds runaway-answer latency/thermal (a long uncapped answer measured 36 s total).
+- **KV rewind** (SDK "KV$ Rewind"): re-prefill turns on rewind-capable engines send the full
+  transcript with `GENIE_DIALOG_SENTENCE_REWIND`; Genie prefix-matches the KV cache and prefills
+  only the divergence, so post-barge-in / language-switch / eviction recovery costs ~the delta.
+  `prompt.assembled.session_mode` now logs `warm | rewind | full`.
+  **Device findings (2026-06-11):** rewind against an EMPTY cache fails hard
+  (`GENIE_STATUS_ERROR_QUERY_FAILED` -6 before any token), so the controller only rewinds when
+  occupancy > 0; with content cached, rewind works on the Qwen3 w4a16 bundle (3/3 OK in the eval
+  battery). A language-switch rewind costs ~full prefill (the system prompt diverges at the
+  start, so there is no shared prefix — TTFT ~500–650 ms vs ~385 ms plain); the payoff case is
+  post-barge-in recovery, where system+history match. GenieLlm additionally SELF-HEALS: a rewind
+  failing with zero output disables rewind for the process and retries plain, so unsupported
+  bundles degrade safely.
+- **Rolling summary on eviction** (config `rolling_summary_tokens`): at >=80 % occupancy the
+  controller first distills the conversation on the still-warm session (`session.summary` event),
+  folds it into the system prompt ("Summary of the conversation so far: ..."), keeps only the
+  freshest 2 turns verbatim, and re-prefills. Long sessions keep continuity past the window.
+- **Tool-call corrective retry**: a malformed/unterminated `[TOOL_CALL]` block (small-model
+  failure mode) triggers ONE corrective `<tool_response>` instructing valid JSON or a plain
+  answer (`tool.malformed_retry` event) instead of silently dropping the attempt.
+- **Rolling summary — device-verified (2026-06-11)**: a 23-turn conversation crossed 81 %
+  occupancy → `session.summary` (ok, 403 chars, ~6 s on the warm session) → re-prefill with
+  history trimmed 6→2 + summary in the system prompt → occupancy collapsed to 27 % and the next
+  turn was warm again (3× window compaction with continuity preserved).
+- **Throughput spikes — both parked with findings**: (a) Genie speculative decoding: AI Hub ships
+  no ready Qwen3 draft bundle (only Llama 3.2 3B SSD), so `bindEngine("draft")` needs a custom
+  0.6B export. (b) LiteRT `Backend.NPU` fails `NOT_FOUND` on the generic Gemma `.litertlm` — the
+  NPU path needs an NPU-specific model variant; the backend fallback chain (npu→gpu→cpu) makes
+  retrying trivial when one is published. GPU stays the Gemma default.
+- **Baseline reports** (output/llm_eval/, local): Qwen3 Genie — TTFT 385 ms full / 77 ms warm,
+  rewind turns 504–646 ms, tool tasks 2/3 called (+1 answered correctly by reusing an earlier
+  tool result from context); Gemma 4 GPU — TTFT ~402–801 ms full / 111 ms warm, tools 3/3,
+  noticeably weaker answer quality. Qwen3 Genie remains the default.
+
 ## On-device verification results (2026-06-10, Z Fold7 / SM8750, typed turns over adb)
 
 1. **Session** ✅ — cold turn TTFT 385 ms / first PCM 972 ms; **warm turn TTFT 76 ms / first PCM

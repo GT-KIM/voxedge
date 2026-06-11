@@ -36,7 +36,7 @@ class AndroidControllerContractTest(unittest.TestCase):
         runner = (CORE / "SpeechTurnRunner.kt").read_text(encoding="utf-8")
 
         self.assertIn("private val turnRunner = SpeechTurnRunner(", controller)
-        self.assertIn("turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled)", controller)
+        self.assertIn("turnRunner.run(gid, prompt, userText, asrMs, onDelta, template, toolsEnabled, rewindTurn)", controller)
         self.assertNotIn("val clauses = Channel<String>", controller)
         self.assertNotIn("val seg = ClauseSegmenter", controller)
         self.assertNotIn("player.write(pcm)", controller)
@@ -45,8 +45,9 @@ class AndroidControllerContractTest(unittest.TestCase):
         self.assertIn("val clauses = Channel<ClauseChunk>(Channel.UNLIMITED)", runner)
         self.assertIn("val seg = ClauseSegmenter", runner)
         # The agentic tool loop generates per step (stepPrompt = initial prompt, then tool
-        # responses); single-step turns still pass the initial prompt through unchanged.
-        self.assertIn("llm.generate(stepPrompt)", runner)
+        # responses); re-prefill turns may rewind on the first step (KV prefix match).
+        self.assertIn("llm.generate(stepPrompt, onLlmToken)", runner)
+        self.assertIn("llm.generateRewind(stepPrompt, onLlmToken)", runner)
         self.assertIn("tts.synthesizeClause", runner)
         self.assertIn("player.write(pcm)", runner)
         self.assertIn("private data class ClauseChunk", runner)

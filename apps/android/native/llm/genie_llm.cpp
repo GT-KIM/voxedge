@@ -140,13 +140,17 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeInit(JNIEnv* env, jobject, js
   return reinterpret_cast<jlong>(e);
 }
 
-// nativeGenerate(handle, prompt, sink) -> GEN_* status. prompt must be ChatML-formatted: the FULL
-// transcript on a cold/re-prefilled session, or ONLY the new user turn on a warm session — the KV
-// cache PERSISTS across calls (no reset here). Session validity policy lives in Kotlin
-// (GenieLlm.warm + core/LlmSessionPolicy); GenieLlm.resetSession() drops the cache explicitly.
+// nativeGenerate(handle, prompt, sink, rewind) -> GEN_* status. prompt must be ChatML-formatted:
+// the FULL transcript on a cold/re-prefilled session, or ONLY the new user turn on a warm
+// session — the KV cache PERSISTS across calls (no reset here). rewind=true sends the query with
+// GENIE_DIALOG_SENTENCE_REWIND: Genie prefix-matches the prompt against the cached KV and
+// re-prefills only the divergent tail (SDK "KV$ Rewind" tutorial) — this makes post-barge-in /
+// post-eviction re-prefills cost ~the delta instead of the whole transcript. Session validity
+// policy lives in Kotlin (GenieLlm.warm + core/LlmSessionPolicy).
 extern "C" JNIEXPORT jint JNICALL
 Java_com_conversationalai_agent_llm_GenieLlm_nativeGenerate(JNIEnv* env, jobject, jlong handle,
-                                                            jstring jPrompt, jobject sink) {
+                                                            jstring jPrompt, jobject sink,
+                                                            jboolean rewind) {
   auto* e = reinterpret_cast<LlmEngine*>(handle);
   if (!e || !e->dialog) return GEN_ERROR;
 
@@ -160,8 +164,10 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeGenerate(JNIEnv* env, jobject
 
   const char* p = env->GetStringUTFChars(jPrompt, nullptr);
   CbCtx ctx{env, sink, onToken};
-  Genie_Status_t st =
-      GenieDialog_query(e->dialog, p, GENIE_DIALOG_SENTENCE_COMPLETE, queryCallback, &ctx);
+  Genie_Status_t st = GenieDialog_query(
+      e->dialog, p,
+      rewind ? GENIE_DIALOG_SENTENCE_REWIND : GENIE_DIALOG_SENTENCE_COMPLETE,
+      queryCallback, &ctx);
   env->ReleaseStringUTFChars(jPrompt, p);
 
   if (ctx.aborted || st == GENIE_STATUS_WARNING_ABORTED) return GEN_ABORTED;
@@ -198,6 +204,22 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeContextOccupancy(JNIEnv*, job
   if (st != GENIE_STATUS_SUCCESS || dt != GENIE_DATATYPE_UINT_32) return -1;
   uint64_t pct = static_cast<uint64_t>(val.uint32Value) * 100u / e->ctxSize;
   return static_cast<jint>(pct > 100 ? 100 : pct);
+}
+
+// Cap the number of generated tokens per query (spoken-UX/latency/thermal bound; ~120 tok is a
+// few spoken sentences at 22 tok/s). Applies to subsequent queries on the live dialog.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_conversationalai_agent_llm_GenieLlm_nativeSetMaxTokens(JNIEnv*, jobject, jlong handle,
+                                                                jint maxTokens) {
+  auto* e = reinterpret_cast<LlmEngine*>(handle);
+  if (!e || !e->dialog || maxTokens <= 0) return JNI_FALSE;
+  Genie_Status_t st = GenieDialog_setMaxNumTokens(e->dialog, static_cast<uint32_t>(maxTokens));
+  if (st != GENIE_STATUS_SUCCESS) {
+    LOGE("GenieDialog_setMaxNumTokens(%d) failed: %d", maxTokens, st);
+    return JNI_FALSE;
+  }
+  LOGI("max generated tokens = %d", maxTokens);
+  return JNI_TRUE;
 }
 
 // Apply new sampling params to the dialog's live sampler. The JSON shape matches the "sampler"

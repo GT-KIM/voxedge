@@ -93,6 +93,34 @@ class SpeechTurnRunnerToolTest {
     }
 
     @Test
+    fun malformedToolCallGetsOneCorrectiveRetry() = runBlocking {
+        val llm = ScriptedSessionLlm(
+            listOf(
+                "[TOOL_CALL]not json at all[/TOOL_CALL]",
+                "[TOOL_CALL]{\"name\":\"get_datetime\",\"arguments\":{}}[/TOOL_CALL]",
+                "It is three in the afternoon.",
+            ),
+        )
+        val clock = FakeClockTool()
+        val epoch = GenerationEpoch()
+
+        val record = runner(llm, ToolRegistry(listOf(clock)), RecordingInputBuilder(), epoch).run(
+            gid = epoch.next(),
+            prompt = "full prompt",
+            userText = "what time is it",
+            asrMs = 0L,
+            onDelta = {},
+        )
+
+        // Step 2 is the corrective message; step 3 answers after the (now valid) call executed.
+        assertEquals(3, llm.prompts.size)
+        assertTrue(llm.prompts[1].contains("malformed"))
+        assertEquals(1, clock.calls)
+        assertEquals("It is three in the afternoon.", record.replyText)
+        assertFalse(record.replyText.contains("TOOL_CALL"))
+    }
+
+    @Test
     fun useToolsFalseDisablesTheLoopEvenWithARegistry() = runBlocking {
         val llm = ScriptedSessionLlm(
             listOf("[TOOL_CALL]{\"name\":\"get_datetime\",\"arguments\":{}}[/TOOL_CALL]"),

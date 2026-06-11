@@ -41,15 +41,22 @@ class LiteRtLlm : LlmEngine {
     private var modelName: String = "litert-lm(uninit)"
 
     /** Load the .litertlm bundle once (resident). [cacheDir] speeds up subsequent loads.
-     *  Tries the GPU backend first (the fast path), then falls back to CPU so a missing/broken
-     *  GPU delegate degrades to slow instead of dead. */
-    fun init(modelPath: String, cacheDir: String? = null, sampling: LlmSampling = LlmSampling()): Boolean {
+     *  Tries the GPU backend first (the broadly-working fast path), then falls back to CPU so a
+     *  missing/broken delegate degrades to slow instead of dead. [preferNpu] prepends the QNN/NPU
+     *  backend (experimental; needs per-SoC support in the runtime). */
+    fun init(
+        modelPath: String,
+        cacheDir: String? = null,
+        sampling: LlmSampling = LlmSampling(),
+        preferNpu: Boolean = false,
+    ): Boolean {
         if (engine != null) return true
         this.sampling = sampling
-        val backends: List<Pair<String, Backend>> = listOf(
-            "gpu" to Backend.GPU(),
-            "cpu" to Backend.CPU(),
-        )
+        val backends: List<Pair<String, Backend>> = buildList {
+            if (preferNpu) add("npu" to Backend.NPU())
+            add("gpu" to Backend.GPU())
+            add("cpu" to Backend.CPU())
+        }
         for ((label, backend) in backends) {
             val result = runCatching {
                 Engine(
