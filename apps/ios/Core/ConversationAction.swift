@@ -4,6 +4,7 @@ enum ConversationAction: Equatable {
     case updateTypedText(String)
     case changeLanguage(String)
     case submitTypedTurn
+    case newSession
     case startHandsFree
     case stopHandsFree
     case startPushToTalk

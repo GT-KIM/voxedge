@@ -29,6 +29,8 @@ data class TurnRecord(
     val totalMs: Long,
     val bargedIn: Boolean = false,
     val spokenContent: String = "",
+    /** Tools the agentic loop ran this turn, e.g. "set_timer(ok)" — for the session timeline. */
+    val toolsUsed: List<String> = emptyList(),
 )
 
 /**
@@ -83,6 +85,20 @@ class ConversationController(
      *  prompt-convention loop and engine-native tool calls share the same gate. */
     fun setConfirmActions(enabled: Boolean) {
         tools?.confirmSideEffects = enabled
+    }
+
+    /** Start a fresh session (UI "New session"): cancels any in-flight turn and clears the
+     *  transcript history, rolling summary, and the engine's KV session. Listening state (if
+     *  hands-free is running) is untouched — the next utterance opens the new session. */
+    fun resetConversation() {
+        generationEpoch.cancel()
+        activePlayer?.interrupt()
+        llm.abort()
+        history.clear()
+        rollingSummary = null
+        sessionLang = null
+        llm.resetSession()
+        eventLogger?.log("conversation.reset")
     }
 
     private val history = ArrayDeque<PromptAssembler.Turn>()   // recent turns for multi-turn context

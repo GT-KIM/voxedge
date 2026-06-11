@@ -5,6 +5,8 @@ sealed interface ConversationAction {
     data class ChangeLanguage(val language: String) : ConversationAction
 
     data object SubmitTypedTurn : ConversationAction
+    /** Start a fresh session: clears the transcript timeline, history, summary, and KV cache. */
+    data object NewSession : ConversationAction
     data object StartHandsFree : ConversationAction
     data object StopHandsFree : ConversationAction
     data object StartPushToTalk : ConversationAction

@@ -46,6 +46,8 @@ class SpeechTurnRunnerToolTest {
         // Spoken/visible text: preamble + final answer, NO JSON.
         assertEquals("Let me check. It is three in the afternoon.", record.replyText)
         assertFalse(record.replyText.contains("tool_call"))
+        // Tool usage surfaces on the turn record (session timeline chips).
+        assertEquals(listOf("get_datetime(ok)"), record.toolsUsed)
         // TTS got both the preamble clause and the answer clause.
         assertTrue(inputBuilder.clauses.any { it.contains("Let me check.") })
         assertTrue(inputBuilder.clauses.any { it.contains("three in the afternoon") })

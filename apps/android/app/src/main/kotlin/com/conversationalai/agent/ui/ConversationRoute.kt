@@ -12,8 +12,11 @@ import com.conversationalai.agent.core.ConvState
 fun ConversationRoute(
     status: String,
     convState: ConvState,
-    convLine: String,
-    convReply: String,
+    sessionItems: List<TranscriptItem>,
+    streamingReply: String,
+    latencyLine: String,
+    contextOccupancyPercent: Int?,
+    activeModelName: String,
     initOk: Boolean,
     llmOk: Boolean,
     asrOk: Boolean,
@@ -23,7 +26,7 @@ fun ConversationRoute(
     initialBargeIn: Boolean,
     settingsController: SettingsController,
     onRequestMicPermission: () -> Unit,
-    onClearConversation: () -> Unit,
+    onNewSession: ((String) -> Unit) -> Unit,
     onSpeak: (String, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onAskLlm: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onConverse: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
@@ -65,7 +68,7 @@ fun ConversationRoute(
         settingsOpen = settingsOpen,
         settings = settings,
         loopState = loopState,
-        transcript = buildTranscriptItems(convLine, convReply, llmOut, msg, loopState),
+        transcript = buildSessionTranscript(sessionItems, streamingReply, loopState),
         runtimeReadiness = buildRuntimeReadiness(
             ttsReady = initOk,
             llmReady = llmOk,
@@ -73,8 +76,10 @@ fun ConversationRoute(
             vadReady = vadOk,
             micGranted = micGranted,
         ),
-        latencySummary = LatencySummary(summaryText = convLine),
+        latencySummary = LatencySummary(summaryText = latencyLine),
         lastError = msg.takeIf { it.contains("failed", ignoreCase = true) || it.contains("denied", ignoreCase = true) },
+        contextOccupancyPercent = contextOccupancyPercent,
+        activeModelName = activeModelName,
     )
 
     ConversationScreen(state = uiState) { action ->
@@ -113,14 +118,14 @@ fun ConversationRoute(
             ConversationAction.SubmitTypedTurn -> {
                 onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
             }
+            ConversationAction.NewSession -> {
+                onNewSession { msg = it }
+            }
             ConversationAction.StartHandsFree -> {
                 if (!micGranted) {
                     onRequestMicPermission()
                 } else {
-                    onToggleConversation(false, { conv = it }, {
-                        onClearConversation()
-                        llmOut = ""
-                    })
+                    onToggleConversation(false, { conv = it }, { llmOut = "" })
                 }
             }
             ConversationAction.StopHandsFree -> {

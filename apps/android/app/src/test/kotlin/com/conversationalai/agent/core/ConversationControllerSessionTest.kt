@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -112,6 +113,23 @@ class ConversationControllerSessionTest {
         assertEquals(listOf("hello there", "how are you"), llm.prompts)
         assertEquals(1, llm.systemPrompts.size)
         assertTrue(llm.systemPrompts.single().contains("Reply ONLY in English"))
+    }
+
+    @Test
+    fun resetConversationStartsAFreshSession() = runBlocking {
+        val llm = FakeSessionLlm()
+        val controller = controller(llm)
+
+        controller.runTurn("remember the number forty two") {}
+        controller.runTurn("and the color blue") {}
+        controller.resetConversation()
+        controller.runTurn("hello again") {}
+
+        // The post-reset turn re-prefills with NO carried history.
+        val last = llm.prompts.last()
+        assertTrue(last.startsWith("<|im_start|>system\n"))
+        assertFalse(last.contains("forty two"))
+        assertFalse(last.contains("the color blue"))
     }
 
     @Test

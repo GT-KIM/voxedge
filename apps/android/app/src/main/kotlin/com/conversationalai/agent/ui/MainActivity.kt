@@ -56,13 +56,42 @@ class MainActivity : ComponentActivity() {
     private var enhanceOk = false
     private var vadOk = false
 
-    // Controller-driven UI state (hands-free loop updates these via callbacks).
+    // SESSION state (the UI is session-wise): the accumulated turn timeline plus the
+    // currently-streaming assistant reply. Hands-free turns arrive via controller callbacks;
+    // typed/PTT/debug turns flow through runConversation — both append to the same timeline.
     private var convState by mutableStateOf(ConvState.IDLE)
-    private var convLine by mutableStateOf("")
-    private var convReply by mutableStateOf("")
+    private var sessionItems by mutableStateOf(listOf<TranscriptItem>())
+    private var streamingReply by mutableStateOf("")
+    private var latencyLine by mutableStateOf("")
+    private var ctxOccupancy by mutableStateOf<Int?>(null)
+    private var itemSeq = 0
     private var capIdx = 0   // rotating index for dumped capture wavs (cap_dump/)
     private var status by mutableStateOf("starting...")
     private var micGranted by mutableStateOf(false)
+
+    private fun appendUserItem(text: String) {
+        streamingReply = ""
+        sessionItems = sessionItems + TranscriptItem(
+            id = "u${itemSeq++}", role = TranscriptRole.USER, text = text,
+        )
+    }
+
+    private fun appendTurnResult(r: com.conversationalai.agent.core.TurnRecord) {
+        streamingReply = ""
+        val reply = r.replyText.trim()
+        if (reply.isNotEmpty() || r.toolsUsed.isNotEmpty()) {
+            sessionItems = sessionItems + TranscriptItem(
+                id = "a${itemSeq++}",
+                role = TranscriptRole.ASSISTANT,
+                text = reply,
+                interrupted = r.bargedIn,
+                spokenContent = r.spokenContent,
+                tools = r.toolsUsed,
+            )
+        }
+        latencyLine = "asr ${r.asrMs}ms / TTFT ${r.ttftMs}ms / firstPCM ${r.firstPcmMs}ms / total ${r.totalMs}ms"
+        ctxOccupancy = llm.contextOccupancyPercent().takeIf { it >= 0 }
+    }
 
     private val micPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         micGranted = it
@@ -113,11 +142,9 @@ class MainActivity : ComponentActivity() {
             scope = lifecycleScope,
             eventLogger = eventLogger,
             onState = { convState = it },
-            onUserText = { convReply = ""; convLine = "you: $it" },
-            onAssistantDelta = { convReply += it },
-            onTurn = { r ->
-                convLine = "you: ${r.userText}  |  asr ${r.asrMs}ms 쨌 TTFT ${r.ttftMs}ms 쨌 firstPCM ${r.firstPcmMs}ms"
-            },
+            onUserText = { appendUserItem(it) },
+            onAssistantDelta = { streamingReply += it },
+            onTurn = { r -> appendTurnResult(r) },
             onUtteranceCaptured = { samples ->
                 runCatching {
                     val dir = File(filesDir, "cap_dump").apply { mkdirs() }
@@ -163,18 +190,30 @@ class MainActivity : ComponentActivity() {
         val text = intent?.getStringExtra(EXTRA_DEBUG_TYPED_TURN)?.takeIf { it.isNotBlank() } ?: return
         Log.i(TAG, "debug_typed_turn: \"$text\"")
         lifecycleScope.launch {
-            convReply = ""
-            convLine = "you: $text"
-            val summary = runConversation(text) { convReply += it }
-            Log.i(TAG, "debug_typed_turn reply: \"$convReply\"")
+            val summary = runConversation(text) {}
+            val reply = sessionItems.lastOrNull { it.role == TranscriptRole.ASSISTANT }?.text ?: ""
+            Log.i(TAG, "debug_typed_turn reply: \"$reply\"")
             Log.i(TAG, "debug_typed_turn done: $summary")
         }
     }
 
-    /** One assistant turn via the controller (typed/PTT entry). Streams deltas; returns a summary. */
+    /** One assistant turn via the controller (typed/PTT/debug entry). Appends the user turn and
+     *  the finished assistant turn to the SESSION timeline; deltas stream into [streamingReply]. */
     private suspend fun runConversation(userText: String, asrMs: Long = 0L, onToken: (String) -> Unit): String {
-        val r = controller.runTurn(userText, asrMs = asrMs) { onToken(it) }
-        return "TTFT=${r.ttftMs}ms 쨌 firstPCM=${r.firstPcmMs}ms 쨌 total=${r.totalMs}ms"
+        appendUserItem(userText)
+        val r = controller.runTurn(userText, asrMs = asrMs) { streamingReply += it; onToken(it) }
+        appendTurnResult(r)
+        return "TTFT=${r.ttftMs}ms / firstPCM=${r.firstPcmMs}ms / total=${r.totalMs}ms"
+    }
+
+    /** Session-wise "New session": clears the timeline and the controller's history/summary/KV. */
+    private fun handleNewSession(setMsg: (String) -> Unit) {
+        controller.resetConversation()
+        sessionItems = emptyList()
+        streamingReply = ""
+        latencyLine = ""
+        ctxOccupancy = null
+        setMsg("new session started")
     }
 
     @Composable
@@ -182,8 +221,11 @@ class MainActivity : ComponentActivity() {
         ConversationRoute(
             status = status,
             convState = convState,
-            convLine = convLine,
-            convReply = convReply,
+            sessionItems = sessionItems,
+            streamingReply = streamingReply,
+            latencyLine = latencyLine,
+            contextOccupancyPercent = ctxOccupancy,
+            activeModelName = llmModel.displayName,
             initOk = initOk,
             llmOk = llmOk,
             asrOk = asrOk,
@@ -193,7 +235,7 @@ class MainActivity : ComponentActivity() {
             initialBargeIn = initialBargeIn,
             settingsController = settingsController,
             onRequestMicPermission = { micPerm.launch(Manifest.permission.RECORD_AUDIO) },
-            onClearConversation = { convReply = ""; convLine = "" },
+            onNewSession = ::handleNewSession,
             onSpeak = ::handleSpeak,
             onAskLlm = ::handleAskLlm,
             onConverse = ::handleConverse,
@@ -375,6 +417,11 @@ class MainActivity : ComponentActivity() {
         if (!currentConv) {
             setConv(true)
             clearConversation()
+            // controller.start() begins a FRESH session (history/KV cleared) — mirror that here.
+            sessionItems = emptyList()
+            streamingReply = ""
+            latencyLine = ""
+            ctxOccupancy = null
             controller.start()
         } else {
             setConv(false)

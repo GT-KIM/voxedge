@@ -62,6 +62,8 @@ data class TranscriptItem(
     val isStreaming: Boolean = false,
     val interrupted: Boolean = false,
     val spokenContent: String = "",
+    /** Tools the agent ran for this turn, e.g. "set_timer(ok)". */
+    val tools: List<String> = emptyList(),
 )
 
 data class LatencySummary(
@@ -112,6 +114,9 @@ data class ConversationUiState(
     val runtimeReadiness: List<RuntimeReadiness> = emptyList(),
     val latencySummary: LatencySummary = LatencySummary(),
     val lastError: String? = null,
+    /** Session header info: LLM context fill (null until the first turn) + active model name. */
+    val contextOccupancyPercent: Int? = null,
+    val activeModelName: String = "",
 ) {
     fun readiness(kind: RuntimeReadinessKind): RuntimeReadinessStatus =
         runtimeReadiness.firstOrNull { it.kind == kind }?.status ?: RuntimeReadinessStatus.INITIALIZING
@@ -142,32 +147,19 @@ fun buildRuntimeReadiness(
     )
 }
 
-fun buildTranscriptItems(
-    convLine: String,
-    convReply: String,
-    llmOutput: String,
-    statusMessage: String,
+/** SESSION timeline: the accumulated turns plus the currently-streaming assistant reply. */
+fun buildSessionTranscript(
+    sessionItems: List<TranscriptItem>,
+    streamingReply: String,
     loopState: SpeechLoopUiState,
 ): List<TranscriptItem> {
-    val items = mutableListOf<TranscriptItem>()
-    if (convLine.isNotBlank()) {
-        items += TranscriptItem(id = "user-current", role = TranscriptRole.USER, text = convLine)
-    }
-    if (convReply.isNotBlank()) {
-        items += TranscriptItem(
-            id = "assistant-current",
-            role = TranscriptRole.ASSISTANT,
-            text = convReply,
-            isStreaming = loopState == SpeechLoopUiState.GENERATING || loopState == SpeechLoopUiState.SPEAKING,
-        )
-    }
-    if (llmOutput.isNotBlank() && convReply.isBlank()) {
-        items += TranscriptItem(id = "assistant-debug", role = TranscriptRole.ASSISTANT, text = llmOutput)
-    }
-    if (items.isEmpty() && statusMessage.isNotBlank()) {
-        items += TranscriptItem(id = "status", role = TranscriptRole.STATUS, text = statusMessage)
-    }
-    return items
+    if (streamingReply.isBlank()) return sessionItems
+    return sessionItems + TranscriptItem(
+        id = "streaming",
+        role = TranscriptRole.ASSISTANT,
+        text = streamingReply,
+        isStreaming = loopState == SpeechLoopUiState.GENERATING || loopState == SpeechLoopUiState.SPEAKING,
+    )
 }
 
 private fun readinessFromFlag(ok: Boolean): RuntimeReadinessStatus =

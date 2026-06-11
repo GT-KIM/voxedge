@@ -1,11 +1,19 @@
 package com.conversationalai.agent.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -16,27 +24,57 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+/**
+ * SESSION-WISE conversation screen (the agent UI): a persistent multi-turn transcript timeline
+ * fills the screen (auto-scrolling, user right / assistant left, tool chips and interruption
+ * markers per turn), with a session header (state, active model, context fill, New session) and
+ * the input controls pinned at the bottom. Settings/diagnostics open as bounded sheets.
+ */
 @Composable
 fun ConversationScreen(
     state: ConversationUiState,
     onAction: (ConversationAction) -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        SessionHeader(state, onAction)
         RuntimeReadinessStrip(state.runtimeReadiness)
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Conversation", style = MaterialTheme.typography.titleLarge)
-            Text("state: ${state.loopState.name.lowercase()}", style = MaterialTheme.typography.labelMedium)
+        // --- the session timeline ---
+        val listState = rememberLazyListState()
+        val items = state.transcript
+        LaunchedEffect(items.size, items.lastOrNull()?.text?.length) {
+            if (items.isNotEmpty()) listState.animateScrollToItem(items.lastIndex)
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (items.isEmpty()) {
+                item {
+                    Text(
+                        "No turns yet - speak or type to start the session.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            items(items, key = { it.id }) { item -> TranscriptBubble(item) }
         }
 
-        TranscriptTimeline(state.transcript)
+        // --- status + pinned input ---
+        LatencySummaryView(state.latencySummary)
+        state.lastError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(state.statusMessage, style = MaterialTheme.typography.bodySmall)
 
         OutlinedTextField(
             value = state.typedText,
@@ -59,6 +97,11 @@ fun ConversationScreen(
                 Text(if (state.busy) "Working..." else "Send")
             }
             MicControl(state, onAction)
+            if (state.busy || state.handsFree || state.recording) {
+                TextButton(onClick = { onAction(ConversationAction.CancelCurrentTurn) }) {
+                    Text("Cancel")
+                }
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -76,33 +119,11 @@ fun ConversationScreen(
                 Text(if (state.recording) "Stop & answer" else "Push to talk")
             }
             OutlinedButton(
-                enabled = state.isReady(RuntimeReadinessKind.VAD) && !state.busy,
-                onClick = { onAction(ConversationAction.ToggleBargeIn) },
-            ) {
-                Text("Barge-in: " + if (state.bargeIn) "ON" else "OFF")
-            }
-            OutlinedButton(
                 enabled = state.isReady(RuntimeReadinessKind.ASR) && !state.busy,
                 onClick = { onAction(ConversationAction.ChangeLanguage(nextLanguage(state.asrLanguage))) },
             ) {
                 Text("ASR: ${state.asrLanguage.uppercase()}")
             }
-        }
-
-        if (state.busy || state.handsFree || state.recording) {
-            TextButton(onClick = { onAction(ConversationAction.CancelCurrentTurn) }) {
-                Text("Cancel")
-            }
-        }
-
-        LatencySummaryView(state.latencySummary)
-
-        state.lastError?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-        }
-        Text(state.statusMessage, style = MaterialTheme.typography.bodyMedium)
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
                 onClick = {
                     onAction(
@@ -119,53 +140,103 @@ fun ConversationScreen(
                     )
                 },
             ) {
-                Text(if (state.diagnosticsOpen) "Close diagnostics" else "Diagnostics")
+                Text(if (state.diagnosticsOpen) "Close diag" else "Diag")
             }
         }
 
         if (state.settingsOpen) {
-            SettingsSheet(settings = state.settings, bargeIn = state.bargeIn, onAction = onAction)
+            Box(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                SettingsSheet(settings = state.settings, bargeIn = state.bargeIn, onAction = onAction)
+            }
         }
 
         if (state.diagnosticsOpen) {
-            DebugRuntimePanel(state, onAction)
-        }
-    }
-}
-
-@Composable
-fun RuntimeReadinessStrip(readiness: List<RuntimeReadiness>) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        readiness.forEach { item ->
-            Surface(color = readinessColor(item.status), tonalElevation = 1.dp) {
-                Text(
-                    "${item.label}: ${item.status.name.lowercase()}",
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                )
+            Box(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
+                DebugRuntimePanel(state, onAction)
             }
         }
     }
 }
 
+/** Session header: loop state, active model + context fill, and the New session control. */
 @Composable
-fun TranscriptTimeline(items: List<TranscriptItem>) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        if (items.isEmpty()) {
-            Text("No turns yet.", style = MaterialTheme.typography.bodyMedium)
-        } else {
-            items.forEach { item ->
-                Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(item.role.name.lowercase(), style = MaterialTheme.typography.labelSmall)
-                        Text(item.text, style = MaterialTheme.typography.bodyMedium)
-                        if (item.interrupted && item.spokenContent.isNotBlank()) {
-                            Text("spoken: ${item.spokenContent}", style = MaterialTheme.typography.labelSmall)
-                        } else if (item.isStreaming) {
-                            Text("streaming", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
+fun SessionHeader(
+    state: ConversationUiState,
+    onAction: (ConversationAction) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text("Session", style = MaterialTheme.typography.titleLarge)
+            val ctx = state.contextOccupancyPercent?.let { " - ctx $it%" } ?: ""
+            val model = state.activeModelName.ifEmpty { "model unknown" }
+            Text(
+                "${state.loopState.name.lowercase()} - $model$ctx",
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        TextButton(
+            enabled = !state.busy,
+            onClick = { onAction(ConversationAction.NewSession) },
+        ) {
+            Text("New session")
+        }
+    }
+}
+
+/** One turn in the session timeline: user right-aligned, assistant left, tool chips inline. */
+@Composable
+fun TranscriptBubble(item: TranscriptItem) {
+    val isUser = item.role == TranscriptRole.USER
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+    ) {
+        Surface(
+            tonalElevation = if (isUser) 3.dp else 1.dp,
+            color = if (isUser) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.widthIn(max = 320.dp),
+        ) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (item.tools.isNotEmpty()) {
+                    Text(
+                        "tools: " + item.tools.joinToString(", "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
                 }
+                if (item.text.isNotBlank()) {
+                    Text(item.text, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (item.interrupted) {
+                    val spoken = item.spokenContent.takeIf { it.isNotBlank() }
+                    Text(
+                        if (spoken != null) "interrupted - spoken: $spoken" else "interrupted",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (item.isStreaming) {
+                    Text("...", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+/** Compact single-row readiness chips (horizontally scrollable). */
+@Composable
+fun RuntimeReadinessStrip(readiness: List<RuntimeReadiness>) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+    ) {
+        readiness.forEach { item ->
+            Surface(color = readinessColor(item.status), tonalElevation = 1.dp) {
+                Text(
+                    "${item.label}: ${item.status.name.lowercase()}",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
         }
     }

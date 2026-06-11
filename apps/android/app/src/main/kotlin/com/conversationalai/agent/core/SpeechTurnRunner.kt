@@ -166,6 +166,7 @@ class SpeechTurnRunner(
         // with NATIVE function calling run tools inside generate(); the filter loop stays out.
         val toolLoop = useTools && tools != null && !tools.isEmpty &&
             llm.sessionCapable && !llm.handlesToolsNatively
+        val toolsUsed = mutableListOf<String>()
         val llmResult = withContext(Dispatchers.Default) {
             var stepPrompt = prompt
             var step = 0
@@ -242,6 +243,7 @@ class SpeechTurnRunner(
                     attributes = mapOf("tool" to call.name, "ok" to toolResult.ok, "chars" to toolResult.content.length),
                 )
                 Log.i(TAG, "tool ${call.name}(${call.arguments}) -> ok=${toolResult.ok}")
+                toolsUsed += call.name + if (toolResult.ok) "(ok)" else "(failed)"
                 stepPrompt = template.toolResponse(toolResult.content)
             }
             seg.finish()
@@ -262,6 +264,7 @@ class SpeechTurnRunner(
             totalMs = totalMs,
             bargedIn = !generationEpoch.isCurrent(gid),
             spokenContent = spoken.toString().trim(),
+            toolsUsed = toolsUsed,
         )
         eventLogger?.log(
             event = "turn.end",
