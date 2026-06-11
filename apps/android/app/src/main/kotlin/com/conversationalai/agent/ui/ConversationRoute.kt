@@ -17,6 +17,8 @@ fun ConversationRoute(
     latencyLine: String,
     contextOccupancyPercent: Int?,
     activeModelName: String,
+    sessions: List<SessionSummary>,
+    currentSessionId: String,
     initOk: Boolean,
     llmOk: Boolean,
     asrOk: Boolean,
@@ -27,6 +29,7 @@ fun ConversationRoute(
     settingsController: SettingsController,
     onRequestMicPermission: () -> Unit,
     onNewSession: ((String) -> Unit) -> Unit,
+    onSelectSession: (String, (String) -> Unit) -> Unit,
     onSpeak: (String, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onAskLlm: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onConverse: (String, () -> Unit, (String) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
@@ -48,6 +51,7 @@ fun ConversationRoute(
     var bargeIn by remember { mutableStateOf(initialBargeIn) }
     var diagnosticsOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var sessionsOpen by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(settingsController.uiState()) }
 
     LaunchedEffect(status) {
@@ -80,6 +84,9 @@ fun ConversationRoute(
         lastError = msg.takeIf { it.contains("failed", ignoreCase = true) || it.contains("denied", ignoreCase = true) },
         contextOccupancyPercent = contextOccupancyPercent,
         activeModelName = activeModelName,
+        sessions = sessions,
+        currentSessionId = currentSessionId,
+        sessionsOpen = sessionsOpen,
     )
 
     ConversationScreen(state = uiState) { action ->
@@ -119,7 +126,14 @@ fun ConversationRoute(
                 onConverse(text, { llmOut = "" }, { llmOut += it }, { busy = it }, { msg = it })
             }
             ConversationAction.NewSession -> {
+                sessionsOpen = false
                 onNewSession { msg = it }
+            }
+            ConversationAction.OpenSessions -> sessionsOpen = true
+            ConversationAction.CloseSessions -> sessionsOpen = false
+            is ConversationAction.SelectSession -> {
+                sessionsOpen = false
+                onSelectSession(action.sessionId) { msg = it }
             }
             ConversationAction.StartHandsFree -> {
                 if (!micGranted) {

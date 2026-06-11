@@ -69,6 +69,26 @@ class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("starting...")
     private var micGranted by mutableStateOf(false)
 
+    // Session persistence (left drawer): one JSONL file per session, auto-saved after each turn.
+    private lateinit var sessionStore: SessionStore
+    private var currentSessionId by mutableStateOf("")
+    private var sessionList by mutableStateOf(listOf<SessionSummary>())
+
+    private fun refreshSessionList() {
+        val fmt = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+        sessionList = sessionStore.list().map {
+            SessionSummary(it.id, it.title, fmt.format(java.util.Date(it.updatedMs)))
+        }
+    }
+
+    private fun persistCurrentSession() {
+        if (sessionItems.isEmpty()) return
+        val title = sessionItems.firstOrNull { it.role == TranscriptRole.USER }?.text?.take(48)
+            ?: "(untitled)"
+        sessionStore.save(currentSessionId, title, System.currentTimeMillis(), sessionItems)
+        refreshSessionList()
+    }
+
     private fun appendUserItem(text: String) {
         streamingReply = ""
         sessionItems = sessionItems + TranscriptItem(
@@ -92,6 +112,7 @@ class MainActivity : ComponentActivity() {
         }
         latencyLine = "asr ${r.asrMs}ms / TTFT ${r.ttftMs}ms / firstPCM ${r.firstPcmMs}ms / total ${r.totalMs}ms"
         ctxOccupancy = llm.contextOccupancyPercent().takeIf { it >= 0 }
+        persistCurrentSession()
     }
 
     private val micPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -172,6 +193,10 @@ class MainActivity : ComponentActivity() {
         settingsController.applyStartupSettings()
         initialBargeIn = store.load().bargeIn
 
+        sessionStore = SessionStore(File(filesDir, "sessions"))
+        currentSessionId = "s${System.currentTimeMillis()}"
+        refreshSessionList()
+
         setContent {
             MaterialTheme { Surface(Modifier.fillMaxSize()) { Screen() } }
         }
@@ -209,12 +234,45 @@ class MainActivity : ComponentActivity() {
 
     /** Session-wise "New session": clears the timeline and the controller's history/summary/KV. */
     private fun handleNewSession(setMsg: (String) -> Unit) {
+        persistCurrentSession()
         controller.resetConversation()
         sessionItems = emptyList()
         streamingReply = ""
         latencyLine = ""
         ctxOccupancy = null
+        currentSessionId = "s${System.currentTimeMillis()}"
         setMsg("new session started")
+    }
+
+    /** Switch to a saved session: restores the timeline AND the controller's transcript history,
+     *  so the agent keeps that conversation's context (re-prefilled on the next turn). */
+    private fun handleSelectSession(sessionId: String, setMsg: (String) -> Unit) {
+        if (sessionId == currentSessionId) return
+        persistCurrentSession()
+        val items = sessionStore.load(sessionId)
+        val turns = mutableListOf<PromptAssembler.Turn>()
+        var pendingUser: String? = null
+        for (item in items) {
+            when (item.role) {
+                TranscriptRole.USER -> pendingUser = item.text
+                TranscriptRole.ASSISTANT -> {
+                    val user = pendingUser
+                    if (user != null && item.text.isNotBlank() && !item.interrupted) {
+                        turns += PromptAssembler.Turn(user, item.text)
+                        pendingUser = null
+                    }
+                }
+                else -> Unit
+            }
+        }
+        controller.restoreHistory(turns)
+        sessionItems = items
+        itemSeq = items.size
+        streamingReply = ""
+        latencyLine = ""
+        ctxOccupancy = null
+        currentSessionId = sessionId
+        setMsg("session restored (${turns.size} turns of context)")
     }
 
     @Composable
@@ -227,6 +285,8 @@ class MainActivity : ComponentActivity() {
             latencyLine = latencyLine,
             contextOccupancyPercent = ctxOccupancy,
             activeModelName = llmModel.displayName,
+            sessions = sessionList,
+            currentSessionId = currentSessionId,
             initOk = initOk,
             llmOk = llmOk,
             asrOk = asrOk,
@@ -237,6 +297,7 @@ class MainActivity : ComponentActivity() {
             settingsController = settingsController,
             onRequestMicPermission = { micPerm.launch(Manifest.permission.RECORD_AUDIO) },
             onNewSession = ::handleNewSession,
+            onSelectSession = ::handleSelectSession,
             onSpeak = ::handleSpeak,
             onAskLlm = ::handleAskLlm,
             onConverse = ::handleConverse,

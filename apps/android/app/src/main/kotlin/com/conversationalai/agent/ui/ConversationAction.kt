@@ -7,6 +7,10 @@ sealed interface ConversationAction {
     data object SubmitTypedTurn : ConversationAction
     /** Start a fresh session: clears the transcript timeline, history, summary, and KV cache. */
     data object NewSession : ConversationAction
+    /** Session drawer (left): open/close, and switch to a persisted session. */
+    data object OpenSessions : ConversationAction
+    data object CloseSessions : ConversationAction
+    data class SelectSession(val sessionId: String) : ConversationAction
     data object StartHandsFree : ConversationAction
     data object StopHandsFree : ConversationAction
     data object StartPushToTalk : ConversationAction

@@ -1,5 +1,6 @@
 package com.conversationalai.agent.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,24 +11,31 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
@@ -42,8 +50,83 @@ fun ConversationScreen(
     state: ConversationUiState,
     onAction: (ConversationAction) -> Unit,
 ) {
+    // Left session drawer (like the coding-agent sidebars); two-way sync with sessionsOpen.
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    LaunchedEffect(state.sessionsOpen) {
+        if (state.sessionsOpen) drawerState.open() else drawerState.close()
+    }
+    LaunchedEffect(drawerState.currentValue) {
+        if (drawerState.currentValue == DrawerValue.Closed && state.sessionsOpen) {
+            onAction(ConversationAction.CloseSessions)
+        }
+    }
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(modifier = Modifier.widthIn(max = 300.dp)) {
+                SessionDrawer(state, onAction)
+            }
+        },
+    ) {
+        ConversationContent(state, onAction)
+    }
+}
+
+/** The session list panel (left drawer): new session + saved sessions, newest first. */
+@Composable
+fun SessionDrawer(
+    state: ConversationUiState,
+    onAction: (ConversationAction) -> Unit,
+) {
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("Sessions", style = MaterialTheme.typography.titleMedium)
+        TextButton(onClick = { onAction(ConversationAction.NewSession) }) {
+            Text("+ New session")
+        }
+        state.sessions.forEach { session ->
+            val current = session.id == state.currentSessionId
+            Surface(
+                color = if (current) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { onAction(ConversationAction.SelectSession(session.id)) },
+            ) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                    Text(
+                        session.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        session.updatedLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (state.sessions.isEmpty()) {
+            Text(
+                "No saved sessions yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConversationContent(
+    state: ConversationUiState,
+    onAction: (ConversationAction) -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         SessionHeader(state, onAction)
@@ -170,13 +253,16 @@ fun ConversationScreen(
     }
 }
 
-/** Session header: loop state, active model + context fill, and the New session control. */
+/** Session header: drawer toggle, loop state, active model + context fill, New session. */
 @Composable
 fun SessionHeader(
     state: ConversationUiState,
     onAction: (ConversationAction) -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        TextButton(onClick = { onAction(ConversationAction.OpenSessions) }) {
+            Text("\u2630", style = MaterialTheme.typography.titleMedium)
+        }
         Column(Modifier.weight(1f)) {
             Text("Session", style = MaterialTheme.typography.titleLarge)
             val ctx = state.contextOccupancyPercent?.let { " - ctx $it%" } ?: ""

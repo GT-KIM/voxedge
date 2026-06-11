@@ -119,6 +119,10 @@ data class ConversationUiState(
     /** Session header info: LLM context fill (null until the first turn) + active model name. */
     val contextOccupancyPercent: Int? = null,
     val activeModelName: String = "",
+    /** Session drawer (left): saved sessions, newest first, plus the open one. */
+    val sessions: List<SessionSummary> = emptyList(),
+    val currentSessionId: String = "",
+    val sessionsOpen: Boolean = false,
 ) {
     fun readiness(kind: RuntimeReadinessKind): RuntimeReadinessStatus =
         runtimeReadiness.firstOrNull { it.kind == kind }?.status ?: RuntimeReadinessStatus.INITIALIZING
@@ -148,6 +152,13 @@ fun buildRuntimeReadiness(
         ),
     )
 }
+
+/** One entry in the session drawer. */
+data class SessionSummary(
+    val id: String,
+    val title: String,
+    val updatedLabel: String,
+)
 
 /** SESSION timeline: the accumulated turns plus the currently-streaming assistant reply. */
 fun buildSessionTranscript(
