@@ -71,6 +71,10 @@ class SpeechTurnRunner(
         val consumer = launch(Dispatchers.Default) {
             player.start()
             var playbackStarted = false
+            // Prosody finishing: a breath-length pause BETWEEN clauses, sized by how the
+            // PREVIOUS clause ended (sentence > comma > mid-phrase cap-break = none), plus short
+            // edge fades on each chunk so hard PCM joins never click.
+            var pauseBeforeNext = 0
             try {
                 for (chunk in clauses) {
                     if (!generationEpoch.isCurrent(gid)) break
@@ -137,6 +141,9 @@ class SpeechTurnRunner(
                         )
                     }
                     spoken.append(chunk.text).append(' ')
+                    if (pauseBeforeNext > 0) player.write(FloatArray(pauseBeforeNext))
+                    pauseBeforeNext = pauseSamplesAfter(chunk.text)
+                    applyEdgeFades(pcm)
                     player.write(pcm)
                 }
             } finally {
@@ -154,7 +161,8 @@ class SpeechTurnRunner(
         val seg = ClauseSegmenter(onClause = { clause ->
             val index = clauseIndex++
             val language = LanguageDetector.detect(clause)
-            val chunk = ClauseChunk(index = index, id = "c$index", text = clause, language = language)
+            val speakable = normalizeForSpeech(clause, language)
+            val chunk = ClauseChunk(index = index, id = "c$index", text = speakable, language = language)
             eventLogger?.log(
                 event = "tts.chunk_request",
                 generationId = gid,
@@ -309,10 +317,51 @@ class SpeechTurnRunner(
 
     private fun elapsedSince(startNs: Long): Long = (System.nanoTime() - startNs) / 1_000_000
 
+    /** Written -> spoken normalization (numbers, clock times, percents) for the TTS, guarded by
+     *  the same NFKD token budget TtsInputBuilder enforces: verbalized numbers EXPAND the clause
+     *  (often 2-4x), so when the result would overflow T=64 keep the written form — the engine
+     *  reading "1500" oddly beats dropping the clause entirely. */
+    private fun normalizeForSpeech(clause: String, language: String): String {
+        val normalized = runCatching { SpokenTextNormalizer.normalize(clause, language) }
+            .getOrDefault(clause)
+        if (normalized == clause) return clause
+        val nfkd = java.text.Normalizer.normalize(normalized, java.text.Normalizer.Form.NFKD).length
+        return if (nfkd <= NORMALIZED_NFKD_BUDGET) normalized else clause
+    }
+
+    /** Inter-clause pause length (samples @44.1 kHz) from the clause's final punctuation. */
+    private fun pauseSamplesAfter(text: String): Int {
+        val last = text.lastOrNull() ?: return 0
+        return when (last) {
+            in SENTENCE_ENDERS -> SENTENCE_PAUSE_SAMPLES
+            in CLAUSE_ENDERS -> CLAUSE_PAUSE_SAMPLES
+            else -> 0   // cap-break mid-phrase: keep it seamless
+        }
+    }
+
+    /** Short linear fade-in/out so chunk joins never click (~5 ms each side). */
+    private fun applyEdgeFades(pcm: FloatArray) {
+        val n = minOf(EDGE_FADE_SAMPLES, pcm.size / 2)
+        for (i in 0 until n) {
+            val g = i.toFloat() / n
+            pcm[i] *= g
+            pcm[pcm.size - 1 - i] *= g
+        }
+    }
+
     companion object {
         private const val TAG = "SpeechTurnRunner"
         /** Generation steps per turn (initial + after tool responses). Bounded so a confused
          *  model can't chain tool calls while the user waits in silence. */
         const val MAX_TOOL_STEPS = 3
+
+        // Prosody finishing (44.1 kHz samples): breath pauses between clauses + click-free joins.
+        private const val SENTENCE_ENDERS = ".!?…。！？"
+        private const val CLAUSE_ENDERS = ",;:、，；："
+        const val SENTENCE_PAUSE_SAMPLES = 7938   // ~180 ms
+        const val CLAUSE_PAUSE_SAMPLES = 3528     // ~80 ms
+        private const val EDGE_FADE_SAMPLES = 220 // ~5 ms
+        /** T=64 minus the <lang></lang> tag overhead TtsInputBuilder adds (~10 units). */
+        private const val NORMALIZED_NFKD_BUDGET = 54
     }
 }

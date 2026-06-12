@@ -100,14 +100,27 @@ static Net loadDlc(const std::string& path) {
   // Unsigned-PD HTP: our skel libs are unsigned, so the SNPE process must run on the unsigned PD.
   zdl::DlSystem::PlatformConfig platformConfig;
   bool optOk = platformConfig.setPlatformOptions("unsignedPD:ON");
-  zdl::SNPE::SNPEBuilder b(n.container.get());
-  zdl::DlSystem::RuntimeList rl; rl.add(zdl::DlSystem::Runtime_t::DSP);
-  b.setRuntimeProcessorOrder(rl);
-  b.setPerformanceProfile(zdl::DlSystem::PerformanceProfile_t::BURST);
-  b.setUseUserSuppliedBuffers(true);
-  b.setPlatformConfig(platformConfig);
   ENGLOG("unsignedPD option set ok=%d valid=%d", (int)optOk, (int)platformConfig.isOptionsValid());
-  n.snpe = b.build();
+  // The TTS graphs share the HTP with the Genie LLM, whose decode loop otherwise starves these
+  // short per-clause execs (transient "te/ve exec failed"). NORMAL_HIGH keeps clause synthesis —
+  // the user is waiting on first audio — ahead of background decode without claiming the
+  // (possibly restricted) HIGH+ tiers; if this PD rejects elevated priority, rebuild at default.
+  auto buildAt = [&](bool elevated) -> std::unique_ptr<zdl::SNPE::SNPE> {
+    zdl::SNPE::SNPEBuilder b(n.container.get());
+    zdl::DlSystem::RuntimeList rl; rl.add(zdl::DlSystem::Runtime_t::DSP);
+    b.setRuntimeProcessorOrder(rl);
+    b.setPerformanceProfile(zdl::DlSystem::PerformanceProfile_t::BURST);
+    if (elevated) b.setExecutionPriorityHint(zdl::DlSystem::ExecutionPriorityHint_t::NORMAL_HIGH);
+    b.setUseUserSuppliedBuffers(true);
+    b.setPlatformConfig(platformConfig);
+    return b.build();
+  };
+  n.snpe = buildAt(true);
+  if (!n.snpe) {
+    ENGLOG("build at NORMAL_HIGH failed (%s); retrying at default priority | err=%s",
+           path.c_str(), zdl::SNPE::SNPEFactory::getLastError());
+    n.snpe = buildAt(false);
+  }
   if (!n.snpe) ENGLOG("build failed: %s | err=%s", path.c_str(), zdl::SNPE::SNPEFactory::getLastError());
   return n;
 }

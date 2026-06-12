@@ -123,6 +123,34 @@ class SpeechTurnRunnerToolTest {
     }
 
     @Test
+    fun sentencePausesAreInsertedBetweenClauses() = runBlocking {
+        val llm = ScriptedSessionLlm(listOf("First one. And then the second."))
+        val player = RecordingPlayer()
+        val epoch = GenerationEpoch()
+
+        SpeechTurnRunner(
+            llm = llm,
+            tts = object : TtsEngine {
+                override fun version() = "fake-tts"
+                override fun synthesizeClause(inputs: TtsInputs, k: Int) = FloatArray(1000)
+            },
+            inputBuilder = RecordingInputBuilder(),
+            playerFactory = { player },
+            generationEpoch = epoch,
+            onPlayerStarted = {},
+            onPlayerStopped = {},
+            onState = {},
+            onSpeakingStarted = {},
+        ).run(epoch.next(), "p", "u", 0L, onDelta = {})
+
+        // pcm(clause 1), sentence pause, pcm(clause 2) — and no trailing pause after the last.
+        assertEquals(
+            listOf(1000, SpeechTurnRunner.SENTENCE_PAUSE_SAMPLES, 1000),
+            player.writes.toList(),
+        )
+    }
+
+    @Test
     fun useToolsFalseDisablesTheLoopEvenWithARegistry() = runBlocking {
         val llm = ScriptedSessionLlm(
             listOf("[TOOL_CALL]{\"name\":\"get_datetime\",\"arguments\":{}}[/TOOL_CALL]"),
@@ -248,6 +276,14 @@ class SpeechTurnRunnerToolTest {
             return LlmEngine.Result.OK
         }
         override fun abort() = Unit
+    }
+
+    private class RecordingPlayer : PcmStreamPlayer {
+        val writes = java.util.concurrent.ConcurrentLinkedQueue<Int>()
+        override fun start() = Unit
+        override fun write(pcm: FloatArray) { writes.add(pcm.size) }
+        override fun interrupt() = Unit
+        override fun stopAndRelease() = Unit
     }
 
     private class FakeClockTool : Tool {
