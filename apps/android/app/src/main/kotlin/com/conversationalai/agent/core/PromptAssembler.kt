@@ -15,9 +15,10 @@ package com.conversationalai.agent.core
  * This keeps persona, concreteness, and follow-up behavior baked into the prompt while making the
  * template a function of context instead of one static string.
  *
- * NOTE: this source is kept strictly ASCII on purpose - non-ASCII literals have tripped the Kotlin
- * compiler on this toolchain (see LanguageDetector). Korean output is enforced by an English
- * directive ("reply only in Korean"), which this setup already handles reliably.
+ * NOTE: most directive modules are ASCII English (Korean OUTPUT is enforced by the English
+ * directive "reply only in Korean"). The Korean few-shot exemplars (STYLE_DEMO_KO) and the tool
+ * trigger words are the exceptions: they need real Hangul to be useful, and raw Hangul compiles
+ * fine on this toolchain (SpokenTextNormalizer.kt relies on the same).
  */
 object PromptAssembler {
 
@@ -138,6 +139,38 @@ object PromptAssembler {
         "This user is speaking English. Reply ONLY in English, in a relaxed, natural conversational " +
             "rhythm with everyday words and contractions - the way a friend talks, not a press release."
 
+    // Few-shot style demonstrations: small models lock onto the SHAPE of an example faster than they
+    // follow abstract rules. These are language-matched (shown only for the detected output language
+    // so they never bias the model toward the wrong language) and are reference-only - the model
+    // must NOT quote them. Each shows: answer in the first clause, one concrete anchor, spoken
+    // rhythm, an honest qualifier, no lists. KO source is raw Hangul (compiles on this toolchain, as
+    // SpokenTextNormalizer.kt already does); only ClauseSegmenter-style escaped literals are avoided.
+    private const val STYLE_DEMO_EN =
+        "For the style and length to aim for (do not quote these, just match their shape): " +
+            "Example - User: how far away is the moon? You: It is about 384,000 kilometers, close " +
+            "enough that light makes the trip in just over a second. " +
+            "Example - User: should a beginner learn guitar or piano first? You: Piano, honestly - it " +
+            "lays music out visually so the theory clicks faster, though a guitar is easier to carry " +
+            "to a party."
+
+    // Exemplar QUESTIONS are deliberately uncommon so they teach the answer SHAPE without doubling
+    // as canned replies to questions users actually ask (a common-question exemplar gets parroted).
+    private const val STYLE_DEMO_KO =
+        "다음은 말투와 길이의 예시예요 " +
+            "(그대로 인용하지 말고 형태만 " +
+            "따라하세요): " +
+            "예시 - 사용자: 선인장은 왜 물을 " +
+            "조금만 줘도 잘 살아? 너: 사막에서 " +
+            "살아남게 진화해서 그래요. 잎을 " +
+            "가시로 바꿔 수분이 날아가는 걸 " +
+            "막고, 줄기에 물을 잔뜩 저장해두거든요. " +
+            "예시 - 사용자: 기차랑 비행기 중에 " +
+            "뭐가 더 친환경적이야? 너: 웬만한 " +
+            "거리면 기차가 훨씬 나아요. 같은 " +
+            "거리도 비행기보다 탄소를 훨씬 적게 " +
+            "내뿜거든요. 대신 시간이 더 걸리는 건 " +
+            "감수해야 하고요."
+
     /** Resolve AUTO to a concrete output language from the user's words (KO/EN pass through). */
     fun resolveLang(userSample: String, lang: Lang = Lang.AUTO): Lang =
         if (lang != Lang.AUTO) lang
@@ -217,8 +250,9 @@ object PromptAssembler {
             Persona.DEFAULT -> PERSONA_DEFAULT
         }
         val langModule = if (resolved == Lang.KO) LANG_KO else LANG_EN
+        val styleDemo = if (resolved == Lang.KO) STYLE_DEMO_KO else STYLE_DEMO_EN
         val base = "$character $SUBSTANCE $HONESTY $PLAYBOOK $ACCURACY $SPEECH_INPUT " +
-            "$FOLLOWUP $VOICE $langModule"
+            "$FOLLOWUP $VOICE $langModule $styleDemo"
         val toolModule = toolsModule(tools)
         val factsMod = factsModule(facts)
         return listOf(base, toolModule, factsMod).filter { it.isNotEmpty() }.joinToString(" ")

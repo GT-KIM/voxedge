@@ -167,6 +167,9 @@ class LiteRtLlm : LlmEngine {
             e.createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(systemPrompt),
+                    // SamplerConfig in litertlm 0.13.1 exposes only topK/topP/temperature/seed —
+                    // no repetition/frequency penalty — so sampling.repetitionPenalty is ignored
+                    // here (it is applied on the Genie backend, which does support it).
                     samplerConfig = SamplerConfig(
                         topK = sampling.topK,
                         topP = sampling.topP.toDouble(),

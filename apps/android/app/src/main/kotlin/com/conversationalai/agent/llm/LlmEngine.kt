@@ -2,11 +2,18 @@ package com.conversationalai.agent.llm
 
 /** Runtime-adjustable sampling parameters. The Genie bundle ships temp=0.7/top-k=20/top-p=0.8;
  *  the app default lowers temp to 0.6 for more grounded spoken answers (review recommendation:
- *  try 0.4-0.6 before judging 4B answer quality). */
+ *  try 0.4-0.6 before judging 4B answer quality).
+ *
+ *  [repetitionPenalty] curbs the token/syllable repetition small models fall into ("simsimsim",
+ *  "pasta pasta pasta"); >1.0 enables it, 1.0 disables. APPLIES TO GENIE ONLY: the LiteRT-LM 0.13.1
+ *  SamplerConfig exposes no penalty field (verified by class inspection), so LiteRtLlm ignores it. */
 data class LlmSampling(
     val temp: Float = 0.6f,
     val topK: Int = 20,
     val topP: Float = 0.8f,
+    // 1.1 = mild (the common llama.cpp default). Higher (1.3+) demonstrably degrades Korean, where
+    // particles and endings repeat naturally, into incoherence — keep it gentle.
+    val repetitionPenalty: Float = 1.1f,
 )
 
 /**

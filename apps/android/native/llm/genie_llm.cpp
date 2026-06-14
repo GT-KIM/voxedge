@@ -227,7 +227,7 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeSetMaxTokens(JNIEnv*, jobject
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_conversationalai_agent_llm_GenieLlm_nativeSetSampling(JNIEnv*, jobject, jlong handle,
                                                                jfloat temp, jint topK,
-                                                               jfloat topP) {
+                                                               jfloat topP, jfloat repetitionPenalty) {
   auto* e = reinterpret_cast<LlmEngine*>(handle);
   if (!e || !e->dialog) return JNI_FALSE;
   GenieSampler_Handle_t sampler = nullptr;
@@ -238,12 +238,23 @@ Java_com_conversationalai_agent_llm_GenieLlm_nativeSetSampling(JNIEnv*, jobject,
   }
   // Shape per ${QAIRT}/examples/Genie/configs/sampler.json: a {"sampler": {...}} wrapper with
   // "type":"basic" is required — the bare sampler object fails with GENIE_STATUS_ERROR_JSON_SCHEMA
-  // (-8), verified on-device 2026-06-10.
-  char json[224];
+  // (-8), verified on-device 2026-06-10. The optional "token-penalty" block (schema from
+  // examples/Genie/configs/llama2-7b-htp.json) curbs the repetition small models fall into; it is
+  // only added when repetitionPenalty > 1.0 so a value of 1.0 cleanly disables it.
+  // Only repetition-penalty (no frequency/presence): a frequency penalty is especially disruptive
+  // for particle-heavy Korean. penalize-last-n=64 keeps the window local to recent loops.
+  char penalty[160] = "";
+  if (repetitionPenalty > 1.0001f) {
+    std::snprintf(penalty, sizeof(penalty),
+                  ",\"token-penalty\":{\"version\":1,\"penalize-last-n\":64,"
+                  "\"repetition-penalty\":%.3f}",
+                  static_cast<double>(repetitionPenalty));
+  }
+  char json[384];
   std::snprintf(json, sizeof(json),
                 "{\"sampler\":{\"type\":\"basic\",\"version\":1,\"seed\":42,"
-                "\"temp\":%.3f,\"top-k\":%d,\"top-p\":%.3f,\"greedy\":false}}",
-                static_cast<double>(temp), static_cast<int>(topK), static_cast<double>(topP));
+                "\"temp\":%.3f,\"top-k\":%d,\"top-p\":%.3f,\"greedy\":false%s}}",
+                static_cast<double>(temp), static_cast<int>(topK), static_cast<double>(topP), penalty);
   GenieSamplerConfig_Handle_t cfg = nullptr;
   st = GenieSamplerConfig_createFromJson(json, &cfg);
   if (st != GENIE_STATUS_SUCCESS) {

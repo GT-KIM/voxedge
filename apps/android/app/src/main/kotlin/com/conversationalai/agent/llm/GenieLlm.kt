@@ -34,7 +34,9 @@ class GenieLlm : LlmEngine {
     private external fun nativeGenerate(handle: Long, prompt: String, sink: TokenSink, rewind: Boolean): Int
     private external fun nativeReset(handle: Long)
     private external fun nativeContextOccupancy(handle: Long): Int
-    private external fun nativeSetSampling(handle: Long, temp: Float, topK: Int, topP: Float): Boolean
+    private external fun nativeSetSampling(
+        handle: Long, temp: Float, topK: Int, topP: Float, repetitionPenalty: Float,
+    ): Boolean
     private external fun nativeSetMaxTokens(handle: Long, maxTokens: Int): Boolean
     private external fun nativeAbort(handle: Long)
     private external fun nativeRelease(handle: Long)
@@ -124,8 +126,14 @@ class GenieLlm : LlmEngine {
 
     override fun setSampling(sampling: LlmSampling): Boolean {
         if (handle == 0L) return false
-        val ok = nativeSetSampling(handle, sampling.temp, sampling.topK, sampling.topP)
-        Log.i(TAG, "setSampling temp=${sampling.temp} topK=${sampling.topK} topP=${sampling.topP} ok=$ok")
+        val ok = nativeSetSampling(
+            handle, sampling.temp, sampling.topK, sampling.topP, sampling.repetitionPenalty,
+        )
+        Log.i(
+            TAG,
+            "setSampling temp=${sampling.temp} topK=${sampling.topK} topP=${sampling.topP} " +
+                "repPenalty=${sampling.repetitionPenalty} ok=$ok",
+        )
         return ok
     }
 
