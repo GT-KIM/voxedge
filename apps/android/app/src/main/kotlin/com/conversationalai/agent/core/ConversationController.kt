@@ -62,6 +62,9 @@ class ConversationController(
     // Optional on-device tools: enables the agentic tool-use loop (SpeechTurnRunner) when the
     // engine is session-capable. Null/empty = plain conversational turns, exactly as before.
     private val tools: com.conversationalai.agent.core.tools.ToolRegistry? = null,
+    // Optional durable memory: its fact snapshot is injected into the system prompt each re-prefill
+    // so the model is grounded on saved facts without having to call recall_facts itself.
+    private val memory: com.conversationalai.agent.core.memory.MemoryStore? = null,
 ) {
     /** Barge-in is EXPERIMENTAL and OFF by default: AEC residual on this device still causes the
      *  assistant to interrupt itself. When off, the mic stays on but turn-time speech is ignored
@@ -486,7 +489,10 @@ class ConversationController(
         } else {
             if (llm.sessionCapable && !rewindTurn) llm.resetSession()
             sessionLang = turnLang
-            val base = PromptAssembler.systemPrompt(lang = turnLang, userSample = userText, tools = toolSpecs)
+            val base = PromptAssembler.systemPrompt(
+                lang = turnLang, userSample = userText, tools = toolSpecs,
+                facts = memory?.promptSnapshot().orEmpty(),
+            )
             val system = rollingSummary?.let { "$base Summary of the conversation so far: $it" } ?: base
             llm.setSystemPrompt(system)   // "raw" engines apply this on session (re)creation
             template.full(system, history.toList(), userText)

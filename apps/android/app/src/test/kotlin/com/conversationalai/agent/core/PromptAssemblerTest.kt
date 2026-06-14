@@ -44,4 +44,15 @@ class PromptAssemblerTest {
         assertTrue(PromptAssembler.systemPrompt(Lang.KO).contains("Reply ONLY in Korean"))
         assertTrue(PromptAssembler.systemPrompt(Lang.EN).contains("Reply ONLY in English"))
     }
+
+    @Test
+    fun savedFactsAreGroundedIntoTheSystemPrompt() {
+        val withFacts = PromptAssembler.systemPrompt(
+            Lang.EN, facts = "- name: Kwantae\n- seat preference: window",
+        )
+        assertTrue(withFacts.contains("name: Kwantae"))
+        assertTrue(withFacts.contains("seat preference: window"))
+        // No facts -> no facts module (no dangling header).
+        assertFalse(PromptAssembler.systemPrompt(Lang.EN).contains("durable facts"))
+    }
 }

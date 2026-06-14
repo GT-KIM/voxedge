@@ -156,6 +156,9 @@ class MainActivity : ComponentActivity() {
             ),
         )
 
+        // Offline tool registry + the durable memory store it shares (for prompt grounding).
+        val deviceTools = com.conversationalai.agent.devicetools.DeviceTools.build(this)
+
         // Step-5 state machine: single canonical mic->ASR->LLM->TTS pipeline (hands-free + one-shot).
         controller = ConversationController(
             vadModelPath = File(filesDir, "vad/silero_vad.onnx").absolutePath,
@@ -178,9 +181,11 @@ class MainActivity : ComponentActivity() {
                     Log.i(TAG, "dumped capture -> ${f.absolutePath} (${samples.size} samples)")
                 }.onFailure { Log.e(TAG, "capture dump failed", it) }
             },
-            // Offline device tools (timer/alarm/battery/flashlight/clock): enables the agentic
-            // tool-use loop on session-capable engines.
-            tools = com.conversationalai.agent.devicetools.DeviceTools.registry(this),
+            // Offline device tools (clock/timer/alarm/battery/flashlight/calculate/memory): enables
+            // the agentic tool-use loop on session-capable engines. The memory handle is also passed
+            // so saved facts are injected into the system prompt (grounding without a recall call).
+            tools = deviceTools.registry,
+            memory = deviceTools.memory,
         )
 
         // Persisted configuration (model choice, sampling, toggles) — applied to the live

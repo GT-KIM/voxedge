@@ -93,8 +93,11 @@ object PromptAssembler {
         // Plain-text [TOOL_CALL] markers on purpose: Qwen's native <tool_call> special tokens are
         // stripped by the Genie detokenizer and would never reach the ToolCallFilter.
         sb.append("You can use device tools. To use one, write the complete JSON call exactly ")
-        sb.append("like this example, then stop: ")
+        sb.append("like these examples, then stop: ")
         sb.append("[TOOL_CALL]{\"name\": \"get_datetime\", \"arguments\": {}}[/TOOL_CALL] ")
+        // A second example WITH arguments, deliberately a calculation: the model pattern-matches
+        // on examples, and a clock-only example makes it think tools are for device state, not math.
+        sb.append("[TOOL_CALL]{\"name\": \"calculate\", \"arguments\": {\"expression\": \"(45 + 17) * 3\"}}[/TOOL_CALL] ")
         sb.append("Always include both the name and the arguments object. Available tools: ")
         specs.joinTo(sb, "; ") { spec ->
             val params = if (spec.params.isEmpty()) {
@@ -109,17 +112,38 @@ object PromptAssembler {
         sb.append(". You have NO built-in clock or device access: when the user asks about the ")
         sb.append("current time or date, the battery, or wants a timer, an alarm, or the ")
         sb.append("flashlight, you MUST call the matching tool instead of guessing or refusing. ")
+        // Likewise offload exact math, and persist/recall durable facts instead of relying on the
+        // (per-session) conversation: small models are unreliable at arithmetic and have no memory.
+        // The math rule must be FORCEFUL — unlike the clock, the model wrongly believes it can do
+        // mental math, so it skips the tool and gives wrong numbers (e.g. 18% of 56500).
+        sb.append("Your mental arithmetic is UNRELIABLE. For ANY calculation — even one that looks ")
+        sb.append("easy, and including percentages, multiplication, or division — you MUST call ")
+        sb.append("calculate and read back its exact result; never state a number you worked out ")
+        sb.append("yourself. When the user tells you something to remember about themselves, call ")
+        sb.append("remember_fact; when they ask what you know about them, call recall_facts. ")
         // Korean trigger words spelled out explicitly: 4B-class models reliably map English
         // requests to tools but often skip the tool on Korean phrasing without these anchors.
         sb.append("This rule applies in EVERY language. Korean examples that REQUIRE a tool call: ")
         sb.append("'\uC9C0\uAE08 \uBA87 \uC2DC' (get_datetime), '\uC2DC\uAC04' or '\uB0A0\uC9DC' ")
         sb.append("(get_datetime), '\uD0C0\uC774\uBA38' (set_timer), '\uC54C\uB78C' (set_alarm), ")
-        sb.append("'\uBC30\uD130\uB9AC' (battery_status), '\uC190\uC804\uB4F1' (flashlight). ")
+        sb.append("'\uBC30\uD130\uB9AC' (battery_status), '\uC190\uC804\uB4F1' (flashlight), ")
+        sb.append("'\uACC4\uC0B0' or '\uBA87\uC774\uC57C' or '\uC5BC\uB9C8\uC57C' or '\uACF1\uD558\uBA74' (calculate), ")
+        sb.append("'\uAE30\uC5B5\uD574' or '\uAE30\uC5B5\uD574\uC918' (remember_fact), '\uB0B4\uAC00 \uBB50\uB77C\uACE0 \uD588\uC9C0' (recall_facts). ")
         sb.append("Tool results go stale: for the CURRENT time, call get_datetime again on every ")
         sb.append("time question instead of reusing an earlier answer. ")
         sb.append("When a tool_response arrives, answer the user naturally in their language; ")
         sb.append("never read JSON, tags, or tool syntax out loud.")
         return sb.toString()
+    }
+
+    /** Durable user facts module: grounds the model on saved memory every turn, so it answers
+     *  "what's my name" correctly WITHOUT having to choose to call recall_facts (small models often
+     *  don't). [facts] is MemoryStore.promptSnapshot() — newline-joined "- key: value" lines. */
+    fun factsModule(facts: String): String {
+        if (facts.isBlank()) return ""
+        return "Here are durable facts the user has asked you to remember about them. Treat them " +
+            "as true and use them naturally when relevant; do not recite the whole list unless " +
+            "asked. Facts:\n" + facts
     }
 
     /** Compose the system prompt for the given language/persona (the switchable template). */
@@ -128,6 +152,7 @@ object PromptAssembler {
         persona: Persona = Persona.DEFAULT,
         userSample: String = "",
         tools: List<com.conversationalai.agent.core.tools.ToolSpec> = emptyList(),
+        facts: String = "",
     ): String {
         val resolved = resolveLang(userSample, lang)
         val character = when (persona) {
@@ -136,7 +161,8 @@ object PromptAssembler {
         val langModule = if (resolved == Lang.KO) LANG_KO else LANG_EN
         val base = "$character $SUBSTANCE $PLAYBOOK $FOLLOWUP $VOICE $langModule"
         val toolModule = toolsModule(tools)
-        return if (toolModule.isEmpty()) base else "$base $toolModule"
+        val factsMod = factsModule(facts)
+        return listOf(base, toolModule, factsMod).filter { it.isNotEmpty() }.joinToString(" ")
     }
 
     /** English default template, for callers/tests that want a static system string. */
