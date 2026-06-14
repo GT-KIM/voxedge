@@ -1,0 +1,30 @@
+name: CI
+
+# Architecture + contract guardrail. Runs the Python contract suite (tests/), which is pure
+# stdlib and verifies the invariants that silently rot: the Android controller contract
+# (interfaces over implementations, RuntimeEventLogger wired, no hardcoded model paths), the
+# network-free runtime evidence (no INTERNET permission, no cloud APIs), the model-pipeline
+# manifest shapes, and the README/offline guardrails.
+#
+# NOTE: the Android JVM unit tests (ArithmeticTest, MemoryStoreTest, ClauseSegmenterTest,
+# SpeechTurnRunner*, etc.) are NOT run here. The module depends on a vendored sherpa-onnx AAR
+# (app/libs) and QAIRT/Genie .so files (src/main/jniLibs) that are intentionally gitignored
+# (proprietary / large), so the module cannot compile on a clean runner. Those tests are run
+# locally before commit (./gradlew :app:testDebugUnitTest).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run contract + evidence tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
