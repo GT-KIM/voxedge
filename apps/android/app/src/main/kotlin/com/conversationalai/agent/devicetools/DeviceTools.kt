@@ -5,8 +5,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.net.Uri
 import android.os.BatteryManager
 import android.provider.AlarmClock
+import android.provider.CalendarContract
 import android.provider.Settings
 import com.conversationalai.agent.core.memory.MemoryStore
 import com.conversationalai.agent.core.tools.Tool
@@ -15,7 +17,10 @@ import com.conversationalai.agent.core.tools.ToolRegistry
 import com.conversationalai.agent.core.tools.ToolResult
 import com.conversationalai.agent.core.tools.ToolSpec
 import java.io.File
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -47,6 +52,10 @@ object DeviceTools {
                 RememberFact(memory),
                 RecallFacts(memory),
                 ForgetFact(memory),
+                CreateCalendarEvent(context),
+                DialNumber(context),
+                SendSms(context),
+                Navigate(context),
             ),
         )
         return Bundle(registry, memory)
@@ -238,4 +247,112 @@ object DeviceTools {
             else ToolResult(false, "no fact saved under '$key'")
         }
     }
+
+    /** Open the calendar's new-event screen pre-filled (ACTION_INSERT — no calendar permission). */
+    private class CreateCalendarEvent(private val context: Context) : Tool {
+        override val spec = ToolSpec(
+            name = "create_calendar_event",
+            description = "open the calendar with a new event pre-filled for the user to confirm",
+            sideEffect = true,
+            params = listOf(
+                ToolParam("title", "event title"),
+                ToolParam("hour", "start hour 0-23", required = false),
+                ToolParam("minute", "start minute 0-59", required = false),
+                ToolParam("duration_minutes", "length in minutes (default 60)", required = false),
+                ToolParam("location", "where", required = false),
+            ),
+        )
+        override fun execute(args: Map<String, String>): ToolResult {
+            val title = args["title"]?.takeIf { it.isNotBlank() }
+                ?: return ToolResult(false, "missing 'title'")
+            val intent = Intent(Intent.ACTION_INSERT)
+                .setData(CalendarContract.Events.CONTENT_URI)
+                .putExtra(CalendarContract.Events.TITLE, title)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            args["location"]?.takeIf { it.isNotBlank() }
+                ?.let { intent.putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
+            val hour = args["hour"]?.toDoubleOrNull()?.toInt()
+            val minute = args["minute"]?.toDoubleOrNull()?.toInt() ?: 0
+            var whenText = "no specific time"
+            if (hour != null && hour in 0..23 && minute in 0..59) {
+                // Today at HH:MM; if it already passed, the calendar UI lets the user move it.
+                val start = LocalDateTime.of(LocalDate.now(), LocalTime.of(hour, minute))
+                val zone = ZoneId.systemDefault()
+                val startMs = start.atZone(zone).toInstant().toEpochMilli()
+                val durationMin = args["duration_minutes"]?.toDoubleOrNull()?.toInt()?.coerceIn(1, 24 * 60) ?: 60
+                intent.putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMs)
+                intent.putExtra(CalendarContract.EXTRA_EVENT_END_TIME, startMs + durationMin * 60_000L)
+                whenText = "today at %02d:%02d for %d min".format(hour, minute, durationMin)
+            }
+            return launch(context, intent, "calendar event '$title' ($whenText)")
+        }
+    }
+
+    /** Open the dialer pre-filled (ACTION_DIAL — no CALL_PHONE permission; user taps call). */
+    private class DialNumber(private val context: Context) : Tool {
+        override val spec = ToolSpec(
+            name = "dial_number",
+            description = "open the phone dialer with a number entered (the user presses call)",
+            sideEffect = true,
+            params = listOf(ToolParam("number", "phone number to dial")),
+        )
+        override fun execute(args: Map<String, String>): ToolResult {
+            val number = args["number"]?.filter { it.isDigit() || it in "+*#" }?.takeIf { it.isNotBlank() }
+                ?: return ToolResult(false, "missing or invalid 'number'")
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            return launch(context, intent, "dialer opened for $number")
+        }
+    }
+
+    /** Open the messaging app pre-filled (ACTION_SENDTO — no SEND_SMS permission; user sends). */
+    private class SendSms(private val context: Context) : Tool {
+        override val spec = ToolSpec(
+            name = "send_sms",
+            description = "open a text message pre-filled with recipient and body (the user sends it)",
+            sideEffect = true,
+            params = listOf(
+                ToolParam("number", "recipient phone number"),
+                ToolParam("message", "message body"),
+            ),
+        )
+        override fun execute(args: Map<String, String>): ToolResult {
+            val number = args["number"]?.filter { it.isDigit() || it in "+*#" }?.takeIf { it.isNotBlank() }
+                ?: return ToolResult(false, "missing or invalid 'number'")
+            val message = args["message"].orEmpty()
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number"))
+                .putExtra("sms_body", message)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            return launch(context, intent, "message to $number drafted")
+        }
+    }
+
+    /** Start map navigation to a destination (geo: query — opens the maps app). */
+    private class Navigate(private val context: Context) : Tool {
+        override val spec = ToolSpec(
+            name = "navigate",
+            description = "open maps with directions to a place or address",
+            sideEffect = true,
+            params = listOf(ToolParam("destination", "place name or address")),
+        )
+        override fun execute(args: Map<String, String>): ToolResult {
+            val dest = args["destination"]?.takeIf { it.isNotBlank() }
+                ?: return ToolResult(false, "missing 'destination'")
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(dest)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Fall back to a generic geo search if turn-by-turn navigation isn't available.
+            val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(dest)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            return runCatching {
+                context.startActivity(intent); ToolResult(true, "navigating to $dest")
+            }.getOrElse {
+                launch(context, fallback, "showing $dest on the map")
+            }
+        }
+    }
+
+    /** Start an activity, turning ActivityNotFound (and friends) into a model-readable result. */
+    private fun launch(context: Context, intent: Intent, okMessage: String): ToolResult =
+        runCatching { context.startActivity(intent); ToolResult(true, okMessage) }
+            .getOrElse { ToolResult(false, "could not open the app for this action: ${it.message}") }
 }
