@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +27,21 @@ import org.junit.Test
  * handleUtterance), standing in for the mic capture callbacks.
  */
 class ConversationControllerSpeculationTest {
+
+    @Test
+    fun transcriptEquivalenceForgivesTrivialAsrNoiseButNotWordChanges() {
+        // Trivial differences between the early and final transcripts must still COMMIT.
+        assertTrue(ConversationController.transcriptsEquivalent("It is 3pm.", "it is 3pm"))
+        assertTrue(ConversationController.transcriptsEquivalent("set a  timer", "Set a timer."))
+        assertTrue(ConversationController.transcriptsEquivalent(
+            "지금 몇 시야?", "지금 몇 시야",   // KO trailing '?'
+        ))
+        // A real word change must CANCEL (not equivalent).
+        assertFalse(ConversationController.transcriptsEquivalent(
+            "set a timer", "set a timer for five minutes",
+        ))
+        assertFalse(ConversationController.transcriptsEquivalent("turn it on", "turn it off"))
+    }
 
     private val samples = FloatArray(1600)
 

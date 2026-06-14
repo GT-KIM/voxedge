@@ -265,7 +265,7 @@ class ConversationController(
             speculation = null
             if (generationEpoch.isCurrent(spec.gid)) {
                 val finalHeard = transcribeSamples(samples, event = "asr.final")
-                if (finalHeard != null && finalHeard.first.trim() == spec.text.trim()) {
+                if (finalHeard != null && transcriptsEquivalent(finalHeard.first, spec.text)) {
                     commitSpeculation(spec)
                     return
                 }
@@ -553,6 +553,19 @@ class ConversationController(
     private fun hasSpeech(text: String) = text.any { it.isLetterOrDigit() }
 
     companion object {
+        /** Speculative-commit gate: the early (~250 ms VAD) and final (~600 ms VAD) transcripts
+         *  see slightly different audio tails, so an exact match needlessly cancels valid
+         *  speculative turns over trivial ASR noise (case, spacing, a trailing period) and throws
+         *  away the head start. Forgive those while still cancelling on a real word change. */
+        internal fun transcriptsEquivalent(a: String, b: String): Boolean =
+            normalizeTranscript(a) == normalizeTranscript(b)
+
+        private fun normalizeTranscript(s: String): String =
+            s.lowercase()
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .trimEnd('.', '!', '?', ',', ';', ':', '。', '！', '？', ' ')
+
         private const val TAG = "ConvController"
         private const val GRACE_MS = 300L      // ignore barge-in this long after SPEAKING starts
         private const val TAIL_GUARD_MS = 350L // half-duplex: keep mic muted this long after playback
