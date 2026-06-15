@@ -89,7 +89,7 @@ user speech → ASR → LLM step ─ plain text ──────────�
 - **v1 tools** (`devicetools/DeviceTools`, all airplane-mode-safe): `get_datetime`, `set_timer`,
   `set_alarm` (system clock app, `SET_ALARM` normal permission), `battery_status`, `flashlight`.
   Tool *results* are model-facing plain English; the model answers the user in the user's
-  language.
+  language. **(Extended to 13 tools + durable memory in v2 — see §5.)**
 - Events: `tool.call` / `tool.result` / `tool.step_limit` (additive, runtime-log-v1).
 
 Next steps on this foundation: LiteRT-LM's native `tools`/`automaticToolCalling` for the Gemma
@@ -180,3 +180,33 @@ destructive/outward actions; multi-call steps.
 5. **Headless harness** — `adb shell am start -n com.conversationalai.agent/.ui.MainActivity
    --es debug_typed_turn "text"` drives a full typed turn (works behind the lockscreen);
    MainActivity is `singleTop` so repeated invocations reuse the resident engines.
+
+## 5. v2 (2026-06-14): more tools, durable memory, prompt quality, localized UI
+
+- **Tool set expanded 5 → 13** (`devicetools/DeviceTools`, all offline): adds `calculate` (an exact
+  offline arithmetic evaluator — small models do mental math wrong), `remember_fact` /
+  `recall_facts` / `forget_fact` (durable memory, below), and four intent-based tools that open the
+  user's own app pre-filled (no dangerous permissions): `create_calendar_event`, `dial_number`,
+  `send_sms`, `navigate`. `<queries>` entries were added to the manifest for Android 11+ visibility.
+- **Durable cross-session memory** (`core/memory/MemoryStore`): a tab-delimited fact store the model
+  writes via `remember_fact`. Critically, a small model does **not** reliably call `recall_facts`, so
+  `MemoryStore.promptSnapshot()` is injected into the system prompt every re-prefill — facts ground
+  every turn without a tool round-trip. Verified cross-session: save name+seat → force-stop → a new
+  session answers correctly with no recall call.
+- **Repetition penalty (Genie only)**: `LlmSampling.repetitionPenalty` (gentle 1.1 default) threads
+  into the Genie sampler JSON as a `token-penalty` block. The active **LiteRT-LM SamplerConfig has no
+  penalty field** (verified by class inspection), so it is ignored there. A strong penalty (1.3 +
+  frequency) audibly broke Korean, hence the gentle default.
+- **System prompt deepened + few-shot**: composable modules (persona / substance / honesty
+  anti-sycophancy / playbook / accuracy / speech-input ASR-robustness / follow-up / voice / language)
+  plus language-matched few-shot exemplars, drawn in part from production voice-agent prompts
+  (HUME / ChatGPT / Claude). Backend-agnostic (applies to both Genie and Gemma).
+- **Fully localized UI** (`ui/UiStrings`): the whole on-screen UI follows the conversation language —
+  an English session is all-English, a Korean session all-Korean.
+- **Honest caveat:** tool *elicitation* on a 4B/2B model is still hit-or-miss, and weaker in Korean.
+  The prompt-convention path (Genie, `[TOOL_CALL]`) and native function calling (Gemma) are both
+  wired; reliability varies. Native (LiteRtToolAdapter) tool calls don't yet surface in the turn
+  record's `toolsUsed` — a known observability gap.
+- **CI**: a GitHub Actions workflow runs the Python contract suite (`tests/`) on push/PR.
+- The device's currently-selected backend in the demo is **Gemma 4 E2B (LiteRT-LM)**; Qwen3-4B Genie
+  remains the primary/measured backend.

@@ -1,5 +1,14 @@
 # Offline ASR Selection (R2)
 
+> **UPDATE — current state (R2 RESOLVED).** The app does NOT use platform/OS ASR. It ships **owned,
+> offline sherpa-onnx** ASR, selected per language: **Korean = a Korean zipformer transducer (int8,
+> CER ~0.008 @ ~51 ms)** as the primary, with Dolphin base CTC only as a fallback; **English =
+> SenseVoice int8**. A script-consistency filter rejects foreign-script hallucinations, and a
+> dual-VAD endpointer drives the speculative-turn path. The GTCRN denoiser is present but **disabled
+> in the main loop** (it did not improve CER). The "Phase A platform ASR / Phase B owned model" plan
+> below is the original design discussion; Phase A (platform ASR) was never integrated — the owned
+> sherpa-onnx path was implemented directly. Kept for rationale/history.
+
 Date: 2026-05-30. Requirements (confirmed with project leader): **Korean + English bilingual**,
 **streaming** (real-time partials + fast endpoint), **balanced** accuracy/footprint, **fully
 offline**, must run on both **Android (SM8750)** and **iOS**, owned (not OS-gated cloud ASR).

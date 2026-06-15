@@ -26,12 +26,14 @@ single complete "MCP object" would add seconds of dead air. So the contract is s
    tool/resource bridge (call ids, tool req/result, status) is added later **only at actual tool
    boundaries**, not at the LLM↔TTS audio boundary.
 
-> **Open decision for the project leader (honest reconciliation):** the original brief says the
-> LLM↔TTS boundary should be "MCP-formatted." Two facts make a literal reading wrong: (a) latency
-> requires a streaming event channel, not a complete-object gate; (b) MCP is a tool/resource
-> protocol, and there are no tools at the audio boundary yet. Proposal: the runtime boundary is
-> the streaming event stream; the durable layer is a conversation turn record with an explicit
-> MCP hook (`tool_calls`) for when real tools appear. Confirm before app code depends on it.
+> **Decision (RESOLVED, and now implemented).** The original brief's "MCP-formatted LLM↔TTS
+> boundary" was reconciled as proposed: the **runtime boundary is the streaming event stream**, and
+> the **durable layer is the conversation turn record** with a `tool_calls` hook for real tools. Real
+> tools now exist — the on-device agentic layer has 13 tools + durable memory — but they sit at the
+> **LLM↔tool** boundary (executed between LLM steps and fed back as a tool-response continuation),
+> not at the audio boundary, exactly as designed. The Android runtime log (`runtime-log-v1`,
+> `RuntimeEventLogger`) is the concrete realization of the event channel; `tool.call`/`tool.result`
+> events were added for the agentic loop.
 
 ## Cancellation / barge-in (`generation_id`)
 
@@ -57,8 +59,8 @@ Both platforms pass a shared suite built from fixtures under `tests/`. It must a
 - **Timed/latency** fixtures (waterfall assertions), **barge-in** (mid-clause stop < 200 ms),
   **stale-event / cancel-epoch races**, **no-speech timeout**, **thermal degrade**, prompt
   normalization, and clause-segmentation fixtures.
-Targets in `docs/design/latency_budget.md` remain **provisional** until offline ASR is selected
-and measured (R2).
+Offline ASR is now selected and measured (R2 resolved: sherpa-onnx Korean zipformer int8 ~51 ms /
+SenseVoice for English), so the `docs/design/latency_budget.md` figures are measured, not provisional.
 
 ## Related specs
 

@@ -7,9 +7,9 @@ Phase 1 prepares Android Qualcomm artifacts for SM8750-class devices using QAIRT
 - QAIRT archive is present at `tools/model_compile/qairt/v2.46.0.260424.zip`.
 - QAIRT archive contains Linux host tools for `snpe-onnx-to-dlc`, `snpe-dlc-quantize`, and `snpe-dlc-graph-prepare`.
 - QAIRT was extracted and validated in the PC's local `Ubuntu-22.04` WSL distro.
-- Supertonic 3 TTS is split into ONNX components; float DLC conversion, random-calibrated INT8 quantization, and SM8750 graph preparation now succeed through the rewritten ONNX path.
-- Qwen3-4B-Instruct-2507 is selected as the primary Android Qualcomm LLM path using Qualcomm AI Hub pre-exported Genie `w4a16` assets.
-- Gemma 4 E2B is kept as a research branch. Direct QNN generation from ONNX-community Gemma4 FP16 artifacts reaches QAIRT dry-run for embedding, but the decoder remains blocked by unsupported fused decoder operators.
+- Supertonic 3 TTS is split into ONNX components; float DLC conversion and SM8750 graph preparation succeed through the rewritten ONNX path. **The app ships the FP16 DLCs.** INT8 (random *and* representative calibration) and W8A16 were built and tested but **rejected** — both audibly broke the short-chunk graphs (see `calibration/README.md`, `generate_representative_tts_calibration.py`, `quantize_tts_t64_l128.sh`, `validate_quantized_tts.py`).
+- Qwen3-4B-Instruct-2507 is the primary Android Qualcomm LLM path, using Qualcomm AI Hub pre-exported Genie `w4a16` assets.
+- Gemma 4 E2B **ships as a second, switchable backend via Google LiteRT-LM** (the `.litertlm` bundle, run on the GPU; pulled by Gradle — no QAIRT step). Separately, a **direct-QNN** export of Gemma 4 was attempted as research and remains blocked: ONNX-community FP16 artifacts reach QAIRT dry-run for the embedding, but the decoder is blocked by unsupported fused decoder operators. The shipped Gemma path is LiteRT-LM, not direct-QNN.
 
 ## Prepared files
 

@@ -1,6 +1,9 @@
 # Network-Free Runtime Evidence
 
-Status: first evidence package, 2026-05-31.
+Status: first evidence package, 2026-05-31. (Current: the offline claim still holds and is broader —
+the LLM is now two offline backends (Qwen3-4B Genie + Gemma 4 E2B LiteRT-LM), Korean ASR is the
+sherpa-onnx Korean zipformer, and the agentic tools/memory are all on-device. CI also asserts no
+`INTERNET` permission / no cloud APIs in `tests/`.)
 
 This document records how the current Android runtime implements ASR, LLM, and TTS without a
 runtime network dependency. Development-time asset acquisition/provisioning may require network

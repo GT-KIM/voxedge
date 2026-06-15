@@ -2,13 +2,18 @@
 
 Purpose: iOS implementation of the offline speech-to-speech conversational loop.
 
-Planned responsibilities:
+Planned responsibilities (to mirror the now-shipping Android app):
 
-- Speech framework integration for ASR.
-- Prompt assembly from shared configurable templates.
-- ANEMLL or MLX integration for LLM inference.
-- Core ML integration for TTS inference.
-- MCP-formatted exchange between LLM output and TTS input.
+- ASR (owned/offline preferred, e.g. sherpa-onnx, to match Android's Korean-zipformer / SenseVoice
+  choice rather than OS cloud ASR).
+- Prompt assembly from the shared composable modules (see `shared/prompts/base_system_prompt.md`).
+- LLM inference — runtime TBD pending on-device measurement on Apple silicon (Core ML / MLX / ANEMLL
+  / a LiteRT path); Android ships two backends (Qwen3-4B Genie + Gemma 4 E2B LiteRT-LM).
+- Core ML integration for TTS inference (Supertonic).
+- The streaming-event-stream + durable turn-record contract (`shared/mcp/`), not an "MCP-formatted"
+  audio boundary (see that README's resolved decision).
+- The agentic layer (on-device tools + durable memory) and per-language UI localization, mirroring
+  Android.
 - UI aligned with the Android application.
 
 No Xcode project is generated yet. The repository now includes build-ready Swift source skeletons

@@ -1,5 +1,12 @@
 # Latency Budget — first-audio waterfall
 
+> **UPDATE — current state.** Two stage notes below are superseded: (1) ASR is no longer "Phase A
+> platform / unmeasured" — it's owned sherpa-onnx, **measured** (Korean zipformer int8 ~51 ms; the
+> dual-VAD endpoint ~0.6 s). (2) The "INT8 ≈ halves" TTS note no longer applies — TTS INT8/W8A16
+> quantization was built, tested, and **rejected** (audibly broken); the app ships **FP16**. The
+> achieved figure is **recognized-text → first audio ≈ 0.55–0.66 s** via clause-streamed FP16 TTS
+> (see README / `docs/teardown.md`). The waterfall structure below still holds.
+
 Status: spec grounded in 2026-05-30 SM8750 measurements. Targets are P50/P95, tracked as a
 **waterfall of stages**, not one blended number. Tracked event timestamps (`t_mono_ms` per stage)
 are in `shared/mcp/conversation_events.schema.json`.

@@ -39,10 +39,21 @@ re-initialized per turn.
 | **Recognized text → first audio** (LLM→clause→TTS) | **~0.55–0.66 s** |
 | LLM (Qwen3-4B, Genie w4a16, HTP) | TTFT ~65–90 ms · ~22 tok/s decode · ~1.18 GB · ~70 °C steady |
 | TTS (Supertonic short-chunk, fp16, 6 flow steps) | ~220 ms / clause, resident |
-| ASR decode (SenseVoice int8 / Dolphin CTC) | ~36 ms / ~27 ms |
+| ASR decode (Korean zipformer int8 · SenseVoice int8 for EN) | ~51 ms · ~36 ms |
 
 Measured in-app with on-device timers, in airplane mode. Numbers are from this open project on this
-specific device — not extrapolated, not a spec sheet.
+specific device — not extrapolated, not a spec sheet. (TTS ships **FP16** — INT8/W8A16 were built
+and tested but audibly broke the model, so they were rejected.)
+
+### What's been added since the original loop
+
+The measured numbers above are the Qwen3-4B Genie path. On top of that core loop the project now has:
+a **second LLM backend** (Gemma 4 E2B via Google LiteRT-LM on the GPU, switchable in-app with the
+Genie path); a small **agentic layer** — 13 offline on-device tools (clock, calculator, calendar,
+dialer, SMS, navigation, …) plus a durable **memory** the model writes to and that is grounded back
+into the system prompt across sessions; a deepened, few-shot system prompt; and a **fully localized
+UI** that follows the conversation language. Tool *calling* on a 4B/2B model is still hit-or-miss, so
+it's wired honestly rather than claimed as solved.
 
 ## What ate the days (the parts worth reading)
 

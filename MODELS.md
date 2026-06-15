@@ -11,10 +11,10 @@ each is governed by its own license, so they are **not redistributed here.** You
 
 | Component | Model | Where it goes (device app storage) |
 |---|---|---|
-| LLM (default) | Qwen3-4B-Instruct-2507, Qualcomm Genie `w4a16` bundle | `files/llm_bundle/` |
-| LLM (optional) | Gemma 4 E2B `.litertlm` (LiteRT-LM) | `files/llm_litert/gemma-4-E2B-it.litertlm` |
-| TTS | Supertonic (short-chunk, graph-prepared DLCs) | `files/tts_dlc/` |
-| ASR (KO) | sherpa-onnx Dolphin base CTC | `files/asr_dolphin/` |
+| LLM (primary, measured) | Qwen3-4B-Instruct-2507, Qualcomm Genie `w4a16` bundle (HTP) | `files/llm_bundle/` |
+| LLM (second backend) | Gemma 4 E2B `.litertlm` (LiteRT-LM, GPU) | `files/llm_litert/gemma-4-E2B-it.litertlm` |
+| TTS | Supertonic (short-chunk, FP16 graph-prepared DLCs) | `files/tts_dlc/` |
+| ASR (KO) | sherpa-onnx Korean zipformer int8 (Dolphin = fallback) | `files/asr_zipformer_ko/` |
 | ASR (EN) | sherpa-onnx SenseVoice int8 | `files/asr/` |
 | VAD | Silero VAD (sherpa-onnx) | `files/vad/` |
 | Runtime | Qualcomm QAIRT / SNPE / Genie libraries (`libGenie.so`, `libSNPE.so`, HTP v79 skels) | app `jniLibs/` + `assets/` |

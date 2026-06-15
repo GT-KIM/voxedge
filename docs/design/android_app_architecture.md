@@ -1,5 +1,13 @@
 # Android App Architecture (Phase 3)
 
+> **UPDATE — current state.** Implemented and shipping. Since this design was written: the LLM is
+> **two switchable backends** (Qwen3-4B Genie on HTP — primary/measured; Gemma 4 E2B via LiteRT-LM on
+> GPU — the demo's selected default), not Genie-only. ASR is **owned sherpa-onnx** (Korean zipformer
+> int8 primary, SenseVoice for English), not platform `SpeechRecognizer` — the "Phase A platform ASR"
+> path below was never taken. On top of the loop there's an **agentic layer** (13 offline tools +
+> durable memory grounded into the prompt) and a **fully language-localized UI**. Treat the
+> module/threading design below as accurate; the ASR-source and single-LLM notes are superseded.
+
 Status: design, pre-code. Maps the platform-neutral specs to concrete Android modules, threads,
 and runtime integrations. Specs this implements: `speech_loop_state_machine.md` (states + power),
 `latency_budget.md` (waterfall), `shared/mcp/` (event contract), `shared/config/` (typed config).

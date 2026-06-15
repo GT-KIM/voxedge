@@ -1,8 +1,18 @@
 # Android app
 
 The Android implementation of the offline speech-to-speech loop:
-**mic → VAD → ASR → LLM (Qualcomm Genie, HTP) → clause segmenter → TTS (SNPE, HTP) → playback**,
-hands-free, fully offline at runtime.
+**mic → VAD → ASR → LLM → clause segmenter → TTS (SNPE, HTP) → playback**, hands-free, fully offline
+at runtime.
+
+- **LLM**: two switchable backends — Qwen3-4B via Qualcomm Genie (HTP, primary/measured) and
+  Gemma 4 E2B via LiteRT-LM (GPU). Persistent KV, KV rewind, rolling summary, speculative turns,
+  repetition penalty (Genie).
+- **ASR**: per-language sherpa-onnx — Korean zipformer int8 (primary), SenseVoice for English; a
+  GTCRN denoiser is wired but **disabled** in the main loop (it didn't improve CER).
+- **Agentic**: 13 offline tools (clock/timer/alarm/battery/flashlight/calculate/memory×3/calendar/
+  dial/SMS/navigate) + durable cross-session memory grounded into the prompt.
+- **UI**: fully localized per conversation language (all-English / all-Korean), session drawer +
+  persistence, settings sheet.
 
 ## Build
 
@@ -26,12 +36,15 @@ Plugin warning because AGP is validated up to `compileSdk 34` while this project
 ```
 app/                Kotlin/Compose app
   src/main/kotlin/com/conversationalai/agent/
-    asr/            OfflineAsr (sherpa-onnx: Dolphin for KO, SenseVoice for EN)
-    llm/            GenieLlm (JNI -> libGenie.so)
+    asr/            OfflineAsr (sherpa-onnx: Korean zipformer for KO, SenseVoice for EN)
+    llm/            GenieLlm (JNI -> libGenie.so) + LiteRtLlm (Gemma 4 E2B) + LlmCatalog
     tts/            SupertonicTts (JNI -> resident SNPE engine), TtsInputBuilder
     audio/          MicStream/VAD, StreamingPcmPlayer, SpeechEnhancer
-    core/           ConversationController state machine, ClauseSegmenter, PromptAssembler
-    ui/             Compose UI
+    core/           ConversationController, ClauseSegmenter, PromptAssembler, SpokenTextNormalizer
+      memory/       MemoryStore (durable cross-session facts)
+      tools/        ToolRegistry / ToolCallFilter (agentic loop)
+    devicetools/    DeviceTools (the 13 on-device tools) + Arithmetic
+    ui/             Compose UI (UiStrings = per-language localization)
 native/             C++ JNI: genie_llm.cpp, supertonic_tts_engine.cpp + CMakeLists
 prepare_jnilibs.ps1 copies the QAIRT/SNPE/Genie runtime .so set into jniLibs/ (not committed)
 ```

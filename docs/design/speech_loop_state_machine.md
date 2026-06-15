@@ -1,5 +1,12 @@
 # Speech-Loop State Machine + Power Policy
 
+> **UPDATE — current state.** The state machine is implemented as specified. Note: ASR is **owned
+> sherpa-onnx** (Korean zipformer int8 primary; SenseVoice for English) with its own Silero dual-VAD
+> endpointing — NOT the "Phase A platform recognizer / network-fallback" path described below, which
+> was never integrated. The GTCRN denoiser is present but **disabled** in the main loop. A
+> speculative early-prefill path (start the turn at the ~250 ms early-VAD checkpoint, gate audible
+> output until the real endpoint confirms) sits on top of this machine.
+
 Status: spec grounded in 2026-05-30 SM8750 measurements. This is the platform-neutral behavior
 both Android and iOS must implement identically (enforced by the conformance suite, R4).
 

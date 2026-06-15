@@ -4,6 +4,12 @@ Device: Galaxy Z Fold7 (SM-F966N), SoC SM8750 (Snapdragon 8 Elite), Android 16, 
 All numbers are measured on this project on this device; the component waterfall and the
 methodology are in [`../design/latency_budget.md`](../design/latency_budget.md).
 
+> **Note (current):** TTS ships **FP16** (short-chunk 64/128). TTS INT8/W8A16 were later built with a
+> representative-calibration pipeline, tested, and **rejected** (audibly broken), so any INT8 TTS row
+> below is a historical conversion measurement, not the shipped config. KO ASR is the **Korean
+> zipformer int8** (~51 ms) now; a second LLM backend (Gemma 4 E2B / LiteRT-LM) ships alongside the
+> measured Qwen3-4B Genie path.
+
 ## LLM — Qwen3-4B-Instruct-2507, Qualcomm Genie w4a16 (ctx 4096)
 
 Runs on SM8750 via Genie (HTP).
