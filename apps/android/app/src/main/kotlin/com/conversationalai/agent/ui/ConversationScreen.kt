@@ -78,14 +78,15 @@ fun SessionDrawer(
     state: ConversationUiState,
     onAction: (ConversationAction) -> Unit,
 ) {
+    val s = UiStrings.of(state.asrLanguage)
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text("Sessions", style = MaterialTheme.typography.titleMedium)
+        Text(s.sessionsTitle, style = MaterialTheme.typography.titleMedium)
         TextButton(onClick = { onAction(ConversationAction.NewSession) }) {
-            Text("+ New session")
+            Text(s.newSessionPlus)
         }
         state.sessions.forEach { session ->
             val current = session.id == state.currentSessionId
@@ -119,7 +120,7 @@ fun SessionDrawer(
         }
         if (state.sessions.isEmpty()) {
             Text(
-                "No saved sessions yet.",
+                s.noSavedSessions,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -132,12 +133,13 @@ private fun ConversationContent(
     state: ConversationUiState,
     onAction: (ConversationAction) -> Unit,
 ) {
+    val s = UiStrings.of(state.asrLanguage)
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         SessionHeader(state, onAction)
-        RuntimeReadinessStrip(state.runtimeReadiness)
+        RuntimeReadinessStrip(state.runtimeReadiness, s)
 
         // --- the session feed (document flow, Codex-style) ---
         val listState = rememberLazyListState()
@@ -156,15 +158,15 @@ private fun ConversationContent(
             if (items.isEmpty() && !working) {
                 item {
                     Text(
-                        "No turns yet - speak or type to start the session.",
+                        s.noTurnsYet,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
-            items(items, key = { it.id }) { item -> TurnBlock(item) }
+            items(items, key = { it.id }) { item -> TurnBlock(item, s) }
             if (working && state.transcript.lastOrNull()?.isStreaming != true) {
-                item { MetaRow(workingLabel(state.loopState)) }
+                item { MetaRow(s.workingLabel(state.loopState)) }
             }
         }
 
@@ -181,7 +183,7 @@ private fun ConversationContent(
         OutlinedTextField(
             value = state.typedText,
             onValueChange = { onAction(ConversationAction.UpdateTypedText(it)) },
-            label = { Text("message") },
+            label = { Text(s.messageHint) },
             modifier = Modifier.fillMaxWidth(),
             enabled = !state.recording,
         )
@@ -196,12 +198,12 @@ private fun ConversationContent(
                     !state.busy,
                 onClick = { onAction(ConversationAction.SubmitTypedTurn) },
             ) {
-                Text(if (state.busy) "Working..." else "Send")
+                Text(if (state.busy) s.working else s.send)
             }
             MicControl(state, onAction)
             if (state.busy || state.handsFree || state.recording) {
                 TextButton(onClick = { onAction(ConversationAction.CancelCurrentTurn) }) {
-                    Text("Cancel")
+                    Text(s.cancel)
                 }
             }
         }
@@ -218,13 +220,13 @@ private fun ConversationContent(
                     )
                 },
             ) {
-                Text(if (state.recording) "Stop & answer" else "Push to talk")
+                Text(if (state.recording) s.stopAndAnswer else s.pushToTalk)
             }
             OutlinedButton(
                 enabled = state.isReady(RuntimeReadinessKind.ASR) && !state.busy,
                 onClick = { onAction(ConversationAction.ChangeLanguage(nextLanguage(state.asrLanguage))) },
             ) {
-                Text("ASR: ${state.asrLanguage.uppercase()}")
+                Text(s.asrPrefix + state.asrLanguage.uppercase())
             }
             TextButton(
                 onClick = {
@@ -233,7 +235,7 @@ private fun ConversationContent(
                     )
                 },
             ) {
-                Text(if (state.settingsOpen) "Close settings" else "Settings")
+                Text(if (state.settingsOpen) s.closeSettings else s.settings)
             }
             TextButton(
                 onClick = {
@@ -242,7 +244,7 @@ private fun ConversationContent(
                     )
                 },
             ) {
-                Text(if (state.diagnosticsOpen) "Close diag" else "Diag")
+                Text(if (state.diagnosticsOpen) s.closeDiag else s.diag)
             }
         }
 
@@ -266,16 +268,17 @@ fun SessionHeader(
     state: ConversationUiState,
     onAction: (ConversationAction) -> Unit,
 ) {
+    val s = UiStrings.of(state.asrLanguage)
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         TextButton(onClick = { onAction(ConversationAction.OpenSessions) }) {
             Text("\u2630", style = MaterialTheme.typography.titleMedium)
         }
         Column(Modifier.weight(1f)) {
-            Text("Session", style = MaterialTheme.typography.titleLarge)
-            val ctx = state.contextOccupancyPercent?.let { " - ctx $it%" } ?: ""
-            val model = state.activeModelName.ifEmpty { "model unknown" }
+            Text(s.sessionHeader, style = MaterialTheme.typography.titleLarge)
+            val ctx = state.contextOccupancyPercent?.let { "${s.ctxPrefix} $it%" } ?: ""
+            val model = state.activeModelName.ifEmpty { s.modelUnknown }
             Text(
-                "${state.loopState.name.lowercase()} - $model$ctx",
+                "${s.loopWord(state.loopState)} - $model$ctx",
                 style = MaterialTheme.typography.labelMedium,
             )
         }
@@ -283,7 +286,7 @@ fun SessionHeader(
             enabled = !state.busy,
             onClick = { onAction(ConversationAction.NewSession) },
         ) {
-            Text("New session")
+            Text(s.newSession)
         }
     }
 }
@@ -295,7 +298,7 @@ fun SessionHeader(
  *    muted meta line (latency) — like a Codex/Claude Code action transcript.
  */
 @Composable
-fun TurnBlock(item: TranscriptItem) {
+fun TurnBlock(item: TranscriptItem, s: UiStrings) {
     if (item.role == TranscriptRole.USER) {
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
@@ -313,19 +316,19 @@ fun TurnBlock(item: TranscriptItem) {
         return
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        item.tools.forEach { tool -> ActionRow(tool) }
+        item.tools.forEach { tool -> ActionRow(tool, s) }
         if (item.text.isNotBlank()) {
             Text(item.text, style = MaterialTheme.typography.bodyMedium)
         }
         if (item.interrupted) {
             val spoken = item.spokenContent.takeIf { it.isNotBlank() }
             Text(
-                if (spoken != null) "\u2298 interrupted - spoken: \"$spoken\"" else "\u2298 interrupted",
+                if (spoken != null) "\u2298 ${s.interruptedSpokenPrefix}\"$spoken\"" else "\u2298 ${s.interrupted}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.error,
             )
         } else if (item.isStreaming) {
-            MetaRow("generating...")
+            MetaRow(s.generating)
         }
         if (item.meta.isNotBlank() && !item.isStreaming) {
             MetaRow(item.meta)
@@ -335,11 +338,11 @@ fun TurnBlock(item: TranscriptItem) {
 
 /** Muted monospace action row, e.g. "✓ ran set_timer" — the Codex command-line look. */
 @Composable
-fun ActionRow(tool: String) {
+fun ActionRow(tool: String, s: UiStrings) {
     val ok = tool.endsWith("(ok)")
     val name = tool.removeSuffix("(ok)").removeSuffix("(failed)")
     Text(
-        (if (ok) "\u2713" else "\u2717") + " ran " + name + if (ok) "" else " (failed)",
+        (if (ok) "\u2713 " else "\u2717 ") + s.actionRow(name, ok),
         style = MaterialTheme.typography.bodySmall,
         fontFamily = FontFamily.Monospace,
         color = if (ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
@@ -357,15 +360,9 @@ fun MetaRow(label: String) {
     )
 }
 
-private fun workingLabel(loopState: SpeechLoopUiState): String = when (loopState) {
-    SpeechLoopUiState.TRANSCRIBING -> "transcribing..."
-    SpeechLoopUiState.SPEAKING -> "speaking..."
-    else -> "thinking..."
-}
-
 /** Compact single-row readiness chips (horizontally scrollable). */
 @Composable
-fun RuntimeReadinessStrip(readiness: List<RuntimeReadiness>) {
+fun RuntimeReadinessStrip(readiness: List<RuntimeReadiness>, s: UiStrings) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -373,7 +370,7 @@ fun RuntimeReadinessStrip(readiness: List<RuntimeReadiness>) {
         readiness.forEach { item ->
             Surface(color = readinessColor(item.status), tonalElevation = 1.dp) {
                 Text(
-                    "${item.label}: ${item.status.name.lowercase()}",
+                    "${s.readinessLabel(item.kind, item.label)}: ${s.statusWord(item.status)}",
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -392,13 +389,14 @@ fun MicControl(
         state.isReady(RuntimeReadinessKind.TTS) &&
         state.isReady(RuntimeReadinessKind.VAD) &&
         !state.busy
+    val s = UiStrings.of(state.asrLanguage)
     Button(
         enabled = enabled || state.handsFree,
         onClick = {
             onAction(if (state.handsFree) ConversationAction.StopHandsFree else ConversationAction.StartHandsFree)
         },
     ) {
-        Text(if (state.handsFree) "Stop listening" else "Start listening")
+        Text(if (state.handsFree) s.stopListening else s.startListening)
     }
 }
 

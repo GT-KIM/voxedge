@@ -8,18 +8,21 @@
   <img alt="Android" src="https://img.shields.io/badge/Android-Snapdragon%20SM8750-3DDC84?logo=android&logoColor=white">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-fully%20offline-0B7285">
   <img alt="ASR" src="https://img.shields.io/badge/ASR-sherpa--onnx-7950F2">
-  <img alt="LLM" src="https://img.shields.io/badge/LLM-Qwen3--4B%20%C2%B7%20Genie%20HTP-1C7ED6">
+  <img alt="LLM" src="https://img.shields.io/badge/LLM-Qwen3--4B%20Genie%20%C2%B7%20Gemma--4%20E2B%20LiteRT-1C7ED6">
   <img alt="TTS" src="https://img.shields.io/badge/TTS-Supertonic-FA5252">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="320" alt="voxedge demo — airplane mode on, an English question, an on-device spoken answer">
+  <img src="docs/assets/demo-en.gif" width="300" alt="voxedge demo (English) — airplane mode on, an on-device spoken answer">
+  &nbsp;&nbsp;
+  <img src="docs/assets/demo-ko.gif" width="300" alt="voxedge demo (Korean) — airplane mode on, an on-device spoken answer">
 </p>
 
-<sub>Airplane mode on (no Wi-Fi/cell): an English question → an on-device spoken answer. ASR, a 4B LLM,
-and TTS all run on the phone; first audio ~0.6 s after the words are recognized. (GIF is silent —
-the text streams on screen; the voice answer is in the video clips.)</sub>
+<sub>Airplane mode on (no Wi-Fi/cell): a question → an on-device spoken answer, running <b>Gemma 4 E2B
+(LiteRT-LM)</b> on the phone. The whole UI follows the conversation language (all-English / all-Korean).
+ASR, the LLM, and TTS all run locally; first audio ~0.6 s after the words are recognized. (GIFs are
+silent — the text streams on screen; the voice answer plays aloud on the device.)</sub>
 
 This is a **measured, honest reference** for what it takes to run a *full* speech loop —
 ASR → LLM → TTS, hands-free, low-latency — entirely on-device on a current mobile SoC. It is not a
@@ -42,6 +45,11 @@ cuts the stream into short clauses and hands each to TTS immediately — clause 
 the LLM decodes *N+1* and the speaker plays *N−1*. First audio depends on the *first clause*, not the
 whole answer. All three engines stay resident in one process (LLM + TTS on the NPU/HTP, ASR on CPU).
 
+On top of the loop there's a small **agentic** layer: an on-device tool registry (clock, calculator,
+calendar, dialer, SMS, navigation) and a durable **memory** the model can write to and that is
+grounded back into the system prompt across sessions — all offline. Tool *calling* on a 4B/2B model
+is still hit-or-miss, so it's wired and honest rather than claimed as solved.
+
 ## Measured numbers (Galaxy Z Fold7 / Snapdragon SM8750, airplane mode)
 
 | Stage | Measured |
@@ -49,7 +57,11 @@ whole answer. All three engines stay resident in one process (LLM + TTS on the N
 | **Recognized text → first audio** (LLM→clause→TTS) | **~0.55–0.66 s** |
 | LLM (Qwen3-4B, Qualcomm Genie w4a16, HTP) | TTFT ~65–90 ms · ~22 tok/s · ~1.18 GB · ~70 °C |
 | TTS (Supertonic short-chunk, fp16, 6 flow steps) | ~220 ms / clause, resident |
-| ASR decode (SenseVoice int8 / Dolphin CTC) | ~36 ms / ~27 ms |
+| ASR decode (Korean zipformer int8 · SenseVoice int8 for EN) | ~51 ms · ~36 ms |
+
+These numbers are from the **Qwen3-4B Genie (HTP)** path. The demo clips above run the second
+backend, **Gemma 4 E2B via LiteRT-LM (GPU)**, which is switchable in-app; its throughput differs
+and is not benchmarked here.
 
 The ~0.6 s is **first audio after the recognized text is available** — achieved by streaming TTS off
 the first (short) clause rather than waiting for the whole answer. The full perceived latency from
@@ -67,6 +79,10 @@ harness are in the [teardown](docs/teardown.md) and [`tools/asr/`](tools/asr/).
 | Hands-free VAD turn-taking | ✅ works |
 | ~0.6 s first audio (clause streaming) | ✅ measured on SM8750 |
 | On-device ASR + 4B LLM + TTS coexisting in one process | ✅ works |
+| Multi-backend LLM (Qwen3-4B Genie · Gemma 4 E2B LiteRT-LM) | ✅ switchable in-app |
+| Bilingual, fully-localized UI + replies (Korean / English) | ✅ works |
+| Durable cross-session memory (facts grounded into the prompt) | ✅ works |
+| On-device tools (clock, calculator, calendar, dial, SMS, navigation, memory) | 🧪 wired; small-model tool-calling reliability varies by model/language |
 | ASR under loud background music | ⚠️ improved (per-language ASR model), not solved |
 | LLM answer quality | ⚠️ 4B-class on-device; prompt/history-tuned, not GPT-class |
 | Barge-in (interrupt mid-answer) | 🧪 experimental, off by default (AEC self-interrupt) |

@@ -138,7 +138,10 @@ class MainActivity : ComponentActivity() {
         asrOk = runtime.asrOk
         enhanceOk = runtime.enhanceOk
         vadOk = runtime.vadOk
-        status = runtime.status
+        // When everything initialized cleanly, leave the status line blank — readiness is already
+        // shown by the chips, and a stray English "engine ready..." line would break the
+        // single-language UI. Keep runtime.status only when it carries a real (error) message.
+        status = if (runtime.initOk && runtime.llmOk && runtime.asrOk && runtime.vadOk) "" else runtime.status
         eventLogger = RuntimeEventLogger(File(filesDir, "runtime_logs/turn_events.jsonl"))
 
         micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -205,6 +208,11 @@ class MainActivity : ComponentActivity() {
         sessionStore = SessionStore(File(filesDir, "sessions"))
         currentSessionId = "s${System.currentTimeMillis()}"
         refreshSessionList()
+
+        // The UI is a light (white) surface, so use DARK status-bar icons — otherwise the system
+        // icons (clock, the airplane-mode indicator, battery) render white-on-white and vanish.
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightStatusBars = true
 
         setContent {
             MaterialTheme { Surface(Modifier.fillMaxSize()) { Screen() } }

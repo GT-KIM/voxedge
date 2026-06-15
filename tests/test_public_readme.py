@@ -48,8 +48,9 @@ class PublicReadmeTest(unittest.TestCase):
             "sherpa-onnx",
             "Qualcomm Genie",
             "Qwen3-4B",
+            "Gemma",        # second LLM backend (Gemma 4 E2B via LiteRT-LM)
             "Supertonic",
-            "Dolphin",
+            "zipformer",    # current Korean ASR (Dolphin is now only a fallback)
         ]:
             self.assertIn(required, self.text)
 

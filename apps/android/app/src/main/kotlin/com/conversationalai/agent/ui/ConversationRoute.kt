@@ -42,7 +42,7 @@ fun ConversationRoute(
     onCancelCurrentTurn: ((Boolean) -> Unit, (Boolean) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onAsrTest: ((Boolean) -> Unit, (String) -> Unit) -> Unit,
 ) {
-    var text by remember { mutableStateOf("\uc548\ub155\ud558\uc138\uc694. \ub9cc\ub098\uc11c \ubc18\uac11\uc2b5\ub2c8\ub2e4.") }
+    var text by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf(status) }
     var llmOut by remember { mutableStateOf("") }
