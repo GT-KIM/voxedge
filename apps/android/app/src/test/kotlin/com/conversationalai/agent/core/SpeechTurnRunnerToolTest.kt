@@ -2,6 +2,7 @@ package com.conversationalai.agent.core
 
 import com.conversationalai.agent.audio.PcmStreamPlayer
 import com.conversationalai.agent.core.tools.Tool
+import com.conversationalai.agent.core.tools.ToolCall
 import com.conversationalai.agent.core.tools.ToolParam
 import com.conversationalai.agent.core.tools.ToolRegistry
 import com.conversationalai.agent.core.tools.ToolResult
@@ -202,6 +203,41 @@ class SpeechTurnRunnerToolTest {
         assertEquals(1, llm.prompts.size)            // single step, no [TOOL_CALL] loop
         assertEquals(0, clock.calls)                 // OUR dispatch wasn't used (engine-internal)
         assertEquals("It is three in the afternoon.", record.replyText)
+    }
+
+    @Test
+    fun nativeToolDispatchesAreRecordedOnTheTurnRecord() = runBlocking {
+        // A native-function-calling engine invokes the registry itself during generate() (exactly
+        // how LiteRtToolAdapter bridges the runtime). The registry observer must still surface the
+        // call on toolsUsed so both backends look the same on the session timeline.
+        val clock = FakeClockTool()
+        val registry = ToolRegistry(listOf(clock))
+        val llm = object : LlmEngine {
+            override fun name() = "native-tools-llm"
+            override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+                registry.dispatch(ToolCall("get_datetime", emptyMap()))   // runtime-internal call
+                onToken("It is three in the afternoon.")
+                return LlmEngine.Result.OK
+            }
+            override fun abort() = Unit
+            override val sessionCapable: Boolean get() = true
+            override fun sessionWarm() = true
+            override val handlesToolsNatively: Boolean get() = true
+        }
+        val epoch = GenerationEpoch()
+
+        val record = runner(llm, registry, RecordingInputBuilder(), epoch).run(
+            gid = epoch.next(),
+            prompt = "what time is it",
+            userText = "what time is it",
+            asrMs = 0L,
+            onDelta = {},
+        )
+
+        assertEquals(1, clock.calls)                          // the engine ran the tool
+        assertEquals(listOf("get_datetime(ok)"), record.toolsUsed)   // ...and we recorded it
+        // The observer is cleared after the turn (no leak into a later turn on the same registry).
+        assertEquals(null, registry.onDispatch)
     }
 
     @Test

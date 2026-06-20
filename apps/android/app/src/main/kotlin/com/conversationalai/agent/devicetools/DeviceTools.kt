@@ -19,7 +19,6 @@ import com.conversationalai.agent.core.tools.ToolSpec
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -90,16 +89,17 @@ object DeviceTools {
             ),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val minutes = args["minutes"]?.toDoubleOrNull()?.toInt()
-                ?: return ToolResult(false, "missing or invalid 'minutes'")
-            if (minutes !in 1..24 * 60) return ToolResult(false, "'minutes' must be 1..1440")
+            val plan = when (val p = DeviceToolLogic.timer(args)) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
+            }
             val intent = Intent(AlarmClock.ACTION_SET_TIMER)
-                .putExtra(AlarmClock.EXTRA_LENGTH, minutes * 60)
+                .putExtra(AlarmClock.EXTRA_LENGTH, plan.seconds)
                 .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            args["label"]?.takeIf { it.isNotBlank() }?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
+            plan.label?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
             context.startActivity(intent)
-            return ToolResult(true, "timer started for $minutes minute(s)")
+            return ToolResult(true, "timer started for ${plan.minutes} minute(s)")
         }
     }
 
@@ -115,19 +115,18 @@ object DeviceTools {
             ),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val hour = args["hour"]?.toDoubleOrNull()?.toInt()
-            val minute = args["minute"]?.toDoubleOrNull()?.toInt()
-            if (hour == null || hour !in 0..23 || minute == null || minute !in 0..59) {
-                return ToolResult(false, "need 'hour' 0-23 and 'minute' 0-59")
+            val plan = when (val p = DeviceToolLogic.alarm(args)) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
             }
             val intent = Intent(AlarmClock.ACTION_SET_ALARM)
-                .putExtra(AlarmClock.EXTRA_HOUR, hour)
-                .putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                .putExtra(AlarmClock.EXTRA_HOUR, plan.hour)
+                .putExtra(AlarmClock.EXTRA_MINUTES, plan.minute)
                 .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            args["label"]?.takeIf { it.isNotBlank() }?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
+            plan.label?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
             context.startActivity(intent)
-            return ToolResult(true, "alarm set for %02d:%02d".format(hour, minute))
+            return ToolResult(true, "alarm set for %02d:%02d".format(plan.hour, plan.minute))
         }
     }
 
@@ -142,17 +141,13 @@ object DeviceTools {
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
             val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-            val pct = if (level >= 0 && scale > 0) level * 100 / scale else -1
             val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == BatteryManager.BATTERY_STATUS_FULL
             val airplane = Settings.Global.getInt(
                 context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0,
             ) == 1
-            return ToolResult(
-                true,
-                "battery $pct%, " + (if (charging) "charging" else "not charging") +
-                    ", airplane mode " + (if (airplane) "on" else "off"),
-            )
+            val pct = DeviceToolLogic.batteryPercent(level, scale)
+            return ToolResult(true, DeviceToolLogic.batterySummary(pct, charging, airplane))
         }
     }
 
@@ -164,10 +159,9 @@ object DeviceTools {
             params = listOf(ToolParam("state", "'on' or 'off'")),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val on = when (args["state"]?.lowercase()) {
-                "on", "true", "1" -> true
-                "off", "false", "0" -> false
-                else -> return ToolResult(false, "'state' must be 'on' or 'off'")
+            val on = when (val p = DeviceToolLogic.flashlightOn(args)) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
             }
             val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val id = cm.cameraIdList.firstOrNull { cameraId ->
@@ -263,28 +257,23 @@ object DeviceTools {
             ),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val title = args["title"]?.takeIf { it.isNotBlank() }
-                ?: return ToolResult(false, "missing 'title'")
+            // Today at HH:MM; if it already passed, the calendar UI lets the user move it.
+            val plan = when (
+                val p = DeviceToolLogic.calendar(args, LocalDate.now(), ZoneId.systemDefault())
+            ) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
+            }
             val intent = Intent(Intent.ACTION_INSERT)
                 .setData(CalendarContract.Events.CONTENT_URI)
-                .putExtra(CalendarContract.Events.TITLE, title)
+                .putExtra(CalendarContract.Events.TITLE, plan.title)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            args["location"]?.takeIf { it.isNotBlank() }
-                ?.let { intent.putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
-            val hour = args["hour"]?.toDoubleOrNull()?.toInt()
-            val minute = args["minute"]?.toDoubleOrNull()?.toInt() ?: 0
-            var whenText = "no specific time"
-            if (hour != null && hour in 0..23 && minute in 0..59) {
-                // Today at HH:MM; if it already passed, the calendar UI lets the user move it.
-                val start = LocalDateTime.of(LocalDate.now(), LocalTime.of(hour, minute))
-                val zone = ZoneId.systemDefault()
-                val startMs = start.atZone(zone).toInstant().toEpochMilli()
-                val durationMin = args["duration_minutes"]?.toDoubleOrNull()?.toInt()?.coerceIn(1, 24 * 60) ?: 60
-                intent.putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMs)
-                intent.putExtra(CalendarContract.EXTRA_EVENT_END_TIME, startMs + durationMin * 60_000L)
-                whenText = "today at %02d:%02d for %d min".format(hour, minute, durationMin)
+            plan.location?.let { intent.putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
+            if (plan.startMs != null && plan.endMs != null) {
+                intent.putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, plan.startMs)
+                intent.putExtra(CalendarContract.EXTRA_EVENT_END_TIME, plan.endMs)
             }
-            return launch(context, intent, "calendar event '$title' ($whenText)")
+            return launch(context, intent, "calendar event '${plan.title}' (${plan.whenText})")
         }
     }
 
@@ -297,8 +286,10 @@ object DeviceTools {
             params = listOf(ToolParam("number", "phone number to dial")),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val number = args["number"]?.filter { it.isDigit() || it in "+*#" }?.takeIf { it.isNotBlank() }
-                ?: return ToolResult(false, "missing or invalid 'number'")
+            val number = when (val p = DeviceToolLogic.dialNumber(args)) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
+            }
             val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             return launch(context, intent, "dialer opened for $number")
@@ -317,13 +308,14 @@ object DeviceTools {
             ),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val number = args["number"]?.filter { it.isDigit() || it in "+*#" }?.takeIf { it.isNotBlank() }
-                ?: return ToolResult(false, "missing or invalid 'number'")
-            val message = args["message"].orEmpty()
-            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number"))
-                .putExtra("sms_body", message)
+            val plan = when (val p = DeviceToolLogic.sms(args)) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
+            }
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${plan.number}"))
+                .putExtra("sms_body", plan.message)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            return launch(context, intent, "message to $number drafted")
+            return launch(context, intent, "message to ${plan.number} drafted")
         }
     }
 
@@ -336,8 +328,10 @@ object DeviceTools {
             params = listOf(ToolParam("destination", "place name or address")),
         )
         override fun execute(args: Map<String, String>): ToolResult {
-            val dest = args["destination"]?.takeIf { it.isNotBlank() }
-                ?: return ToolResult(false, "missing 'destination'")
+            val dest = when (val p = DeviceToolLogic.navDestination(args)) {
+                is DeviceToolLogic.Parsed.Err -> return ToolResult(false, p.message)
+                is DeviceToolLogic.Parsed.Ok -> p.value
+            }
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(dest)))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             // Fall back to a generic geo search if turn-by-turn navigation isn't available.

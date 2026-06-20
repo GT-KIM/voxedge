@@ -187,8 +187,40 @@ class SpeechTurnRunner(
         // with NATIVE function calling run tools inside generate(); the filter loop stays out.
         val toolLoop = useTools && tools != null && !tools.isEmpty &&
             llm.sessionCapable && !llm.handlesToolsNatively
-        val toolsUsed = mutableListOf<String>()
-        val llmResult = withContext(Dispatchers.Default) {
+        // Synchronized: native-function-calling engines dispatch from the runtime's own thread.
+        val toolsUsed = java.util.Collections.synchronizedList(mutableListOf<String>())
+        // Observability for BOTH tool-call paths: the prompt-convention loop dispatches in the step
+        // loop below, while native-function-calling engines dispatch INSIDE generate() (via
+        // LiteRtToolAdapter). One registry observer records the tool on the turn record and emits
+        // tool.call/tool.result for either backend (native calls were previously invisible).
+        val nativeTools = llm.handlesToolsNatively
+        var currentToolStep = 1
+        if (tools != null && useTools) {
+            tools.onDispatch = { call, result ->
+                toolsUsed += call.name + if (result.ok) "(ok)" else "(failed)"
+                eventLogger?.log(
+                    event = "tool.call",
+                    generationId = gid,
+                    elapsedMs = elapsedSince(t0),
+                    attributes = mapOf(
+                        "tool" to call.name, "step" to currentToolStep,
+                        "args" to call.arguments.size, "native" to nativeTools,
+                    ),
+                )
+                eventLogger?.log(
+                    event = "tool.result",
+                    generationId = gid,
+                    elapsedMs = elapsedSince(t0),
+                    attributes = mapOf(
+                        "tool" to call.name, "ok" to result.ok,
+                        "chars" to result.content.length, "native" to nativeTools,
+                    ),
+                )
+                Log.i(TAG, "tool ${call.name} -> ok=${result.ok}" + if (nativeTools) " (native)" else "")
+            }
+        }
+        val llmResult = try {
+        withContext(Dispatchers.Default) {
             var stepPrompt = prompt
             var step = 0
             var result: LlmEngine.Result
@@ -253,26 +285,17 @@ class SpeechTurnRunner(
                     )
                     break
                 }
-                eventLogger?.log(
-                    event = "tool.call",
-                    generationId = gid,
-                    elapsedMs = elapsedSince(t0),
-                    attributes = mapOf("tool" to call.name, "step" to step, "args" to call.arguments.size),
-                )
+                currentToolStep = step
+                // Dispatch records tool.call/tool.result + toolsUsed via the registry observer.
                 val toolResult = tools!!.dispatch(call)
-                eventLogger?.log(
-                    event = "tool.result",
-                    generationId = gid,
-                    elapsedMs = elapsedSince(t0),
-                    attributes = mapOf("tool" to call.name, "ok" to toolResult.ok, "chars" to toolResult.content.length),
-                )
-                Log.i(TAG, "tool ${call.name}(${call.arguments}) -> ok=${toolResult.ok}")
-                toolsUsed += call.name + if (toolResult.ok) "(ok)" else "(failed)"
                 stepPrompt = template.toolResponse(toolResult.content)
             }
             seg.finish()
             clauses.close()
             result
+        }
+        } finally {
+            if (tools != null && useTools) tools.onDispatch = null
         }
         consumer.join()
         onPlayerStopped(player)
@@ -288,7 +311,7 @@ class SpeechTurnRunner(
             totalMs = totalMs,
             bargedIn = !generationEpoch.isCurrent(gid),
             spokenContent = spoken.toString().trim(),
-            toolsUsed = toolsUsed,
+            toolsUsed = toolsUsed.toList(),
         )
         eventLogger?.log(
             event = "turn.end",

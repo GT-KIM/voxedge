@@ -65,6 +65,10 @@ class ConversationController(
     // Optional durable memory: its fact snapshot is injected into the system prompt each re-prefill
     // so the model is grounded on saved facts without having to call recall_facts itself.
     private val memory: com.conversationalai.agent.core.memory.MemoryStore? = null,
+    // Fired when a turn would otherwise end in silence (ASR couldn't make it out, generation
+    // failed, or every TTS clause dropped). An audible cue is always played; the UI may also
+    // surface a localized notice from this callback.
+    private val onNotice: (AudibleFeedback.Cue) -> Unit = {},
 ) {
     /** Barge-in is EXPERIMENTAL and OFF by default: AEC residual on this device still causes the
      *  assistant to interrupt itself. When off, the mic stays on but turn-time speech is ignored
@@ -173,6 +177,16 @@ class ConversationController(
         eventLogger = eventLogger,
         tools = tools,
         flowSteps = { ttsFlowSteps },
+    )
+
+    // Voices the silent-failure cues (A2). Audio I/O lives here, not in the controller body.
+    private val cuePlayer = FailureCuePlayer(
+        tts = tts,
+        inputBuilder = inputBuilder,
+        playerFactory = playerFactory,
+        flowSteps = { ttsFlowSteps },
+        onPlayerStarted = { activePlayer = it },
+        onPlayerStopped = { player -> if (activePlayer === player) activePlayer = null },
     )
 
     init {
@@ -295,7 +309,14 @@ class ConversationController(
         if (!bargeInEnabled) micStream?.muted = true
         val text = transcribe(samples)
         if (text == null) {
-            if (!bargeInEnabled) micStream?.muted = false
+            // No recognizable text. If the audio was clearly speech (not a noise blip), tell the
+            // user we missed it instead of going silent; the mic is still muted, so the cue is safe.
+            val cued = AudibleFeedback.looksLikeSpeech(samples, MIC_SAMPLE_RATE)
+            if (cued) signalFailure(AudibleFeedback.Cue.NOT_UNDERSTOOD, langCode(sessionLang))
+            if (!bargeInEnabled) {
+                if (cued) kotlinx.coroutines.delay(TAIL_GUARD_MS)
+                micStream?.muted = false
+            }
             if (running) setState(ConvState.LISTENING)
             return
         }
@@ -308,6 +329,7 @@ class ConversationController(
         onUserText(userText)
         val rec = generateAndSpeak(generationEpoch.next(), userText, asrMs) { onAssistantDelta(it) }
         onTurn(rec)
+        maybeSignalSilentTurn(rec)   // audible cue if the turn produced no speech (mic still muted)
         if (!bargeInEnabled) {
             kotlinx.coroutines.delay(TAIL_GUARD_MS)   // let the speaker's acoustic tail / reverb clear
             micStream?.muted = false                  // (MicStream resets the VAD on un-mute)
@@ -326,7 +348,7 @@ class ConversationController(
         )
         spec.gate.complete(Unit)
         spec.job?.join()
-        spec.record?.let { onTurn(it) }
+        spec.record?.let { onTurn(it); maybeSignalSilentTurn(it) }
         if (!bargeInEnabled) {
             kotlinx.coroutines.delay(TAIL_GUARD_MS)
             micStream?.muted = false
@@ -552,6 +574,41 @@ class ConversationController(
     }
     private fun hasSpeech(text: String) = text.any { it.isLetterOrDigit() }
 
+    // --- audible failure cues (A2): never let a real turn end in silence ---
+
+    private fun langCode(l: PromptAssembler.Lang?): String =
+        if (l == PromptAssembler.Lang.KO) "ko" else "en"
+
+    /** Speak a short, language-matched cue (delegated to [cuePlayer]; audio I/O stays out of the
+     *  orchestrator). Sets RECOVERING so the UI shows a localized status during the cue. */
+    private fun signalFailure(cue: AudibleFeedback.Cue, lang: String) {
+        if (!running) return
+        setState(ConvState.RECOVERING)
+        onNotice(cue)
+        eventLogger?.log("feedback.cue", attributes = mapOf("cue" to cue.name, "lang" to lang))
+        cuePlayer.speak(cue, lang, TTS_SAMPLE_RATE)
+    }
+
+    /** After a turn: if it produced no spoken audio, signal it. A blank answer with no tool call is
+     *  a generation failure (spoken cue); a non-blank answer that never reached the speaker means
+     *  every TTS clause dropped — an earcon, since the synthesizer itself is suspect. */
+    private fun maybeSignalSilentTurn(rec: TurnRecord) {
+        if (rec.bargedIn) return
+        val produced = rec.replyText.isNotBlank()
+        val spoke = rec.firstPcmMs > 0L
+        when {
+            !produced && rec.toolsUsed.isEmpty() ->
+                signalFailure(AudibleFeedback.Cue.GENERATION_FAILED, langCode(PromptAssembler.resolveLang(rec.userText)))
+            produced && !spoke -> {
+                if (!running) return
+                setState(ConvState.RECOVERING)
+                onNotice(AudibleFeedback.Cue.PLAYBACK_FAILED)
+                eventLogger?.log("feedback.cue", attributes = mapOf("cue" to "PLAYBACK_FAILED"))
+                cuePlayer.earcon(TTS_SAMPLE_RATE)
+            }
+        }
+    }
+
     companion object {
         /** Speculative-commit gate: the early (~250 ms VAD) and final (~600 ms VAD) transcripts
          *  see slightly different audio tails, so an exact match needlessly cancels valid
@@ -567,6 +624,8 @@ class ConversationController(
                 .trimEnd('.', '!', '?', ',', ';', ':', '。', '！', '？', ' ')
 
         private const val TAG = "ConvController"
+        private const val MIC_SAMPLE_RATE = 16000    // capture rate (failure-cue speech heuristic)
+        private const val TTS_SAMPLE_RATE = 44100    // playback rate (failure-cue earcon synthesis)
         private const val GRACE_MS = 300L      // ignore barge-in this long after SPEAKING starts
         private const val TAIL_GUARD_MS = 350L // half-duplex: keep mic muted this long after playback
         private const val MAX_HISTORY_TURNS = 6   // recent turns kept for context (within ctx 4096)

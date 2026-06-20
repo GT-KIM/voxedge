@@ -75,9 +75,14 @@ LLM:
 
 Tool use (agentic loop, 2026-06-10, additive):
 
-- `tool.call` — the model requested a tool (`tool`, `step`, `args`).
-- `tool.result` — dispatch outcome (`tool`, `ok`, `chars`).
+- `tool.call` — the model requested a tool (`tool`, `step`, `args`, `native`).
+- `tool.result` — dispatch outcome (`tool`, `ok`, `chars`, `native`).
 - `tool.step_limit` — the per-turn generation-step cap stopped a tool chain.
+
+`native` (2026-06-20): `true` when the engine ran the tool through its own function-calling runtime
+(LiteRT-LM / Gemma), `false` for the prompt-convention `[TOOL_CALL]` loop (Genie). Both paths now
+funnel through one `ToolRegistry` observer, so native tool calls — previously only in logcat — also
+appear here and on the turn record's `toolsUsed`.
 
 TTS/playback:
 
@@ -91,6 +96,8 @@ TTS/playback:
 Turn/control:
 
 - `turn.end` — includes `llm_result` (`OK`/`CONTEXT_EXCEEDED`/`ABORTED`/`ERROR`) since 2026-06-10.
+- `feedback.cue` (2026-06-20) — an audible cue played because a turn would otherwise be silent
+  (`cue`: `NOT_UNDERSTOOD` | `GENERATION_FAILED` | `PLAYBACK_FAILED`, plus `lang` for spoken cues).
 - `control.barge_in`
 - `control.llm_model_selected` — persisted LLM choice changed (`model_id`); applied next launch.
 

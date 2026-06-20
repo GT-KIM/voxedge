@@ -57,6 +57,12 @@ class ToolRegistry(private val tools: List<Tool>) {
 
     @Volatile var confirmSideEffects: Boolean = false
 
+    /** Notified after EVERY dispatch outcome. Both tool-call paths funnel through [dispatch] — the
+     *  prompt-convention loop (SpeechTurnRunner) and engine-native function calling (the LiteRT
+     *  runtime invoking LiteRtToolAdapter) — so a single observer makes tool usage visible on BOTH
+     *  backends (previously native calls were invisible to the turn record and event log). */
+    @Volatile var onDispatch: ((ToolCall, ToolResult) -> Unit)? = null
+
     private val lock = Any()
     private var currentTurn = 0L
     private var pendingName: String? = null
@@ -74,6 +80,12 @@ class ToolRegistry(private val tools: List<Tool>) {
     }
 
     fun dispatch(call: ToolCall): ToolResult {
+        val result = execute(call)
+        runCatching { onDispatch?.invoke(call, result) }   // observation must never break a turn
+        return result
+    }
+
+    private fun execute(call: ToolCall): ToolResult {
         val tool = tools.firstOrNull { it.spec.name == call.name }
             ?: return ToolResult(
                 ok = false,
