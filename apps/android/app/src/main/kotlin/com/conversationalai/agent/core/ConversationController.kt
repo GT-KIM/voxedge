@@ -487,11 +487,11 @@ class ConversationController(
             turnLang = turnLang,
         )
         val template = ChatTemplate.fromId(llm.chatTemplateId())
-        // Advertise tools in the system prompt only for the prompt-convention loop; engines with
-        // native function calling declare them through the runtime instead.
-        val toolSpecs = if (toolsEnabled && tools != null && !tools.isEmpty &&
-            llm.sessionCapable && !llm.handlesToolsNatively
-        ) {
+        // Tool specs feed the system prompt for BOTH backends now: the prompt-convention path gets
+        // the full module ([TOOL_CALL] syntax + directives), the native-FC path gets the WHEN-policy
+        // (PromptAssembler routes on nativeTools). Passing specs to the native path is what makes
+        // Gemma actually reach for a tool instead of answering from its head (measured 0/11 -> ...).
+        val toolSpecs = if (toolsEnabled && tools != null && !tools.isEmpty && llm.sessionCapable) {
             tools.specs
         } else {
             emptyList()
@@ -519,6 +519,7 @@ class ConversationController(
             val base = PromptAssembler.systemPrompt(
                 lang = turnLang, userSample = userText, tools = toolSpecs,
                 facts = memory?.promptSnapshot().orEmpty(),
+                nativeTools = llm.handlesToolsNatively,
             )
             val system = rollingSummary?.let { "$base Summary of the conversation so far: $it" } ?: base
             llm.setSystemPrompt(system)   // "raw" engines apply this on session (re)creation

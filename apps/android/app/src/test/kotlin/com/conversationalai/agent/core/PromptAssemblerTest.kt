@@ -46,6 +46,27 @@ class PromptAssemblerTest {
     }
 
     @Test
+    fun nativeBackendGetsToolPolicyButNotCallSyntax() {
+        val specs = listOf(
+            com.conversationalai.agent.core.tools.ToolSpec("get_datetime", "current time"),
+            com.conversationalai.agent.core.tools.ToolSpec(
+                "calculate", "math",
+                listOf(com.conversationalai.agent.core.tools.ToolParam("expression", "the expression")),
+            ),
+        )
+        val native = PromptAssembler.systemPrompt(Lang.EN, tools = specs, nativeTools = true)
+        val convention = PromptAssembler.systemPrompt(Lang.EN, tools = specs, nativeTools = false)
+        // Both backends get the WHEN-to-use directives (this is what was missing for native FC).
+        assertTrue(native.contains("calculate tool"))
+        assertTrue(convention.contains("calculate"))
+        // Only the prompt-convention path gets the [TOOL_CALL] call syntax; native FC must not.
+        assertTrue(convention.contains("[TOOL_CALL]"))
+        assertFalse(native.contains("[TOOL_CALL]"))
+        // No tools -> no tool text at all (no dangling policy).
+        assertFalse(PromptAssembler.systemPrompt(Lang.EN).contains("calculate tool"))
+    }
+
+    @Test
     fun savedFactsAreGroundedIntoTheSystemPrompt() {
         val withFacts = PromptAssembler.systemPrompt(
             Lang.EN, facts = "- name: Kwantae\n- seat preference: window",

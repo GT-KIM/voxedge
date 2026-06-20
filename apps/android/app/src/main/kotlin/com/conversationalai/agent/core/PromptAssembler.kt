@@ -176,8 +176,42 @@ object PromptAssembler {
         if (lang != Lang.AUTO) lang
         else if (LanguageDetector.detect(userSample) == "ko") Lang.KO else Lang.EN
 
-    /** Tool-use module: how to call device tools and how to behave around tool output. The call
-     *  syntax must match core/ToolCallFilter's markers exactly. */
+    /** Tool-use POLICY: WHEN to reach for a tool. Used for the NATIVE-FC path (Gemma/LiteRT), which
+     *  never sees [toolsModule] (its call syntax is engine-internal) and so, without these
+     *  directives, just answers from its head — often wrongly (measured 0/11 tool selection). The
+     *  prompt-convention path keeps its directives inside [toolsModule] instead, so the two never
+     *  double up. Wording is backend-neutral ("use the tool", not "write [TOOL_CALL]"). Korean
+     *  triggers are inline because 2-4B models map English requests to tools but skip the tool on
+     *  Korean phrasing without anchors (measured Genie EN 83% vs KO 0%). Korean via \\uXXXX to keep
+     *  this source ASCII. */
+    private const val TOOL_POLICY =
+        "You have device tools, and using one is REQUIRED for anything you cannot know on your own. " +
+            "You have no built-in clock or device access, so when the user asks the current time or " +
+            "date, the battery level, or wants a timer, an alarm, or the flashlight, you MUST use the " +
+            "matching tool - do not guess, refuse, or merely say you will check; actually use it. " +
+            "Your mental arithmetic is UNRELIABLE: for ANY calculation, even an easy-looking one, and " +
+            "including percentages, multiplication, and division, you MUST use the calculate tool and " +
+            "read back its exact result, and never state a number you worked out in your head. " +
+            "When the user tells you something to remember about themselves, use remember_fact; when " +
+            "they ask what you know about them, use recall_facts. " +
+            "This applies in EVERY language, including Korean - do NOT answer from your head just " +
+            "because the request is Korean. Korean requests that REQUIRE a tool: " +
+            "'지금 몇 시'/'시간'/'날짜' use get_datetime, " +
+            "'타이머' use set_timer, '알람' use set_alarm, " +
+            "'배터리' use battery_status, '손전등' use flashlight, " +
+            "'계산'/'얼마야'/'몇이야'/'곱하면'/" +
+            "'더하기'/'빼기'/'나누기'/'퍼센트' use calculate, " +
+            "'기억해'/'기억해줘' use remember_fact, " +
+            "'내가 뭐라고 했지'/'뭐였지' use recall_facts. " +
+            "Tool results go stale: for the current time, use get_datetime again on every time " +
+            "question instead of reusing an earlier answer. When a tool result comes back, answer the " +
+            "user naturally in their language and never read JSON, tags, or tool syntax aloud."
+
+    /** Tool-use module (prompt-convention backends, e.g. Genie/Qwen): the [TOOL_CALL] call syntax,
+     *  forceful WHEN directives, Korean triggers, and the available-tool list. Native-FC engines get
+     *  the call syntax from the runtime and the WHEN directives from [TOOL_POLICY] instead, so
+     *  [systemPrompt] gives them [TOOL_POLICY] and suppresses this module. The markers must match
+     *  core/ToolCallFilter's exactly. */
     fun toolsModule(specs: List<com.conversationalai.agent.core.tools.ToolSpec>): String {
         if (specs.isEmpty()) return ""
         val sb = StringBuilder()
@@ -244,6 +278,9 @@ object PromptAssembler {
         userSample: String = "",
         tools: List<com.conversationalai.agent.core.tools.ToolSpec> = emptyList(),
         facts: String = "",
+        // True when the engine does its own function calling (Gemma/LiteRT): it gets the WHEN-to-use
+        // policy but NOT the [TOOL_CALL] syntax module (the runtime supplies the call mechanism).
+        nativeTools: Boolean = false,
     ): String {
         val resolved = resolveLang(userSample, lang)
         val character = when (persona) {
@@ -253,7 +290,13 @@ object PromptAssembler {
         val styleDemo = if (resolved == Lang.KO) STYLE_DEMO_KO else STYLE_DEMO_EN
         val base = "$character $SUBSTANCE $HONESTY $PLAYBOOK $ACCURACY $SPEECH_INPUT " +
             "$FOLLOWUP $VOICE $langModule $styleDemo"
-        val toolModule = toolsModule(tools)
+        // Native-FC engines get the policy (when to use a tool); prompt-convention engines get the
+        // full module (policy + [TOOL_CALL] syntax + tool list). Either way, no tools -> nothing.
+        val toolModule = when {
+            tools.isEmpty() -> ""
+            nativeTools -> TOOL_POLICY
+            else -> toolsModule(tools)
+        }
         val factsMod = factsModule(facts)
         return listOf(base, toolModule, factsMod).filter { it.isNotEmpty() }.joinToString(" ")
     }
