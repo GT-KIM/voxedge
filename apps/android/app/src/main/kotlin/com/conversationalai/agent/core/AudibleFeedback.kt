@@ -44,9 +44,15 @@ object AudibleFeedback {
         if (samples.isEmpty() || sampleRate <= 0) return false
         val durationMs = samples.size * 1000L / sampleRate
         if (durationMs < MIN_SPEECH_MS) return false
+        return rms(samples) >= MIN_SPEECH_RMS
+    }
+
+    /** Root-mean-square amplitude of [samples] (0 for empty). Exposed for the energy gate + logs. */
+    fun rms(samples: FloatArray): Double {
+        if (samples.isEmpty()) return 0.0
         var sumSq = 0.0
         for (s in samples) sumSq += s.toDouble() * s
-        return sqrt(sumSq / samples.size) >= MIN_SPEECH_RMS
+        return sqrt(sumSq / samples.size)
     }
 
     /**
@@ -72,7 +78,9 @@ object AudibleFeedback {
     }
 
     const val MIN_SPEECH_MS = 350L
-    const val MIN_SPEECH_RMS = 0.008
+    // The buffer already passed VAD endpointing, so this is only a floor against near-silent
+    // buffers (whole-buffer RMS is diluted by the silence padding around the actual sound).
+    const val MIN_SPEECH_RMS = 0.004
     private const val TONE_MS = 150
     private const val PEAK = 0.22
     private val TONES_HZ = doubleArrayOf(660.0, 440.0)   // descending, friendly

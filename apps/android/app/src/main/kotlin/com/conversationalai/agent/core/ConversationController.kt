@@ -312,6 +312,11 @@ class ConversationController(
             // No recognizable text. If the audio was clearly speech (not a noise blip), tell the
             // user we missed it instead of going silent; the mic is still muted, so the cue is safe.
             val cued = AudibleFeedback.looksLikeSpeech(samples, MIC_SAMPLE_RATE)
+            Log.i(
+                TAG,
+                "no-speech committed: ${samples.size * 1000L / MIC_SAMPLE_RATE}ms " +
+                    "rms=${"%.4f".format(AudibleFeedback.rms(samples))} cued=$cued",
+            )
             if (cued) signalFailure(AudibleFeedback.Cue.NOT_UNDERSTOOD, langCode(sessionLang))
             if (!bargeInEnabled) {
                 if (cued) kotlinx.coroutines.delay(TAIL_GUARD_MS)
