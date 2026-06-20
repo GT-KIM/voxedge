@@ -1,0 +1,37 @@
+{
+  "description": "Tool-calling golden set for tools/llm/eval_tools.py. Measures, per backend (Genie/Gemma), three things: (1) tool SELECTION — did the model call the expected tool; (2) argument EXTRACTION — did it pull the right values; (3) false positives — chat prompts that must call NO tool. Keep ids stable across runs so A/B stays meaningful; append new cases at the END.",
+  "match_rules": {
+    "minutes": "int", "hour": "int", "minute": "int", "duration_minutes": "int",
+    "number": "digits", "expression": "expr",
+    "_default": "contains"
+  },
+  "cases": [
+    {"id": "en-calc-add", "lang": "en", "text": "What is 18 plus 47?", "expect_tool": "calculate", "expect_args": {"expression": "18+47"}},
+    {"id": "en-calc-mul", "lang": "en", "text": "Multiply 234 by 56 for me.", "expect_tool": "calculate", "expect_args": {"expression": "234*56"}},
+    {"id": "en-calc-big", "lang": "en", "text": "What is 48239 times 7184?", "expect_tool": "calculate", "expect_args": {"expression": "48239*7184"}},
+    {"id": "ko-calc-add", "lang": "ko", "text": "1234 더하기 5678은 얼마야?", "expect_tool": "calculate", "expect_args": {"expression": "1234+5678"}},
+    {"id": "ko-calc-pct", "lang": "ko", "text": "84의 15퍼센트는 얼마야?", "expect_tool": "calculate", "expect_args": {"expression": "15%of84"}},
+
+    {"id": "en-time", "lang": "en", "text": "What time is it right now?", "expect_tool": "get_datetime", "expect_args": {}},
+    {"id": "ko-time", "lang": "ko", "text": "지금 몇 시야?", "expect_tool": "get_datetime", "expect_args": {}},
+    {"id": "en-battery", "lang": "en", "text": "How much battery do I have left?", "expect_tool": "battery_status", "expect_args": {}},
+    {"id": "ko-battery", "lang": "ko", "text": "배터리 얼마나 남았어?", "expect_tool": "battery_status", "expect_args": {}},
+
+    {"id": "en-remember", "lang": "en", "text": "Please remember that my favorite color is teal.", "expect_tool": "remember_fact", "expect_args": {"value": "teal"}},
+    {"id": "ko-remember", "lang": "ko", "text": "내가 창가 자리를 좋아한다고 기억해 줘.", "expect_tool": "remember_fact", "expect_args": {"value": "창가"}},
+
+    {"id": "en-chat-fact", "lang": "en", "text": "Tell me one fun fact about the moon.", "expect_tool": null, "expect_args": {}},
+    {"id": "en-chat-advice", "lang": "en", "text": "How can I make my mornings less rushed?", "expect_tool": null, "expect_args": {}},
+    {"id": "en-chat-greet", "lang": "en", "text": "Hey, how is your day going?", "expect_tool": null, "expect_args": {}},
+    {"id": "ko-chat-fact", "lang": "ko", "text": "고래에 대한 재미있는 사실 하나 알려줘.", "expect_tool": null, "expect_args": {}},
+    {"id": "ko-chat-mood", "lang": "ko", "text": "오늘 좀 피곤한데 기운 나는 말 좀 해줘.", "expect_tool": null, "expect_args": {}},
+
+    {"id": "en-timer", "lang": "en", "side_effect": true, "text": "Set a timer for 5 minutes.", "expect_tool": "set_timer", "expect_args": {"minutes": "5"}},
+    {"id": "ko-timer", "lang": "ko", "side_effect": true, "text": "10분 타이머 맞춰 줘.", "expect_tool": "set_timer", "expect_args": {"minutes": "10"}},
+    {"id": "en-alarm", "lang": "en", "side_effect": true, "text": "Set an alarm for 7:30 in the morning.", "expect_tool": "set_alarm", "expect_args": {"hour": "7", "minute": "30"}},
+    {"id": "ko-alarm", "lang": "ko", "side_effect": true, "text": "아침 6시에 알람 맞춰 줘.", "expect_tool": "set_alarm", "expect_args": {"hour": "6", "minute": "0"}},
+    {"id": "en-flash", "lang": "en", "side_effect": true, "text": "Turn on the flashlight.", "expect_tool": "flashlight", "expect_args": {"state": "on"}},
+    {"id": "en-navigate", "lang": "en", "side_effect": true, "text": "Give me directions to Gangnam Station.", "expect_tool": "navigate", "expect_args": {"destination": "gangnam"}},
+    {"id": "en-dial", "lang": "en", "side_effect": true, "text": "Call 010-1234-5678 please.", "expect_tool": "dial_number", "expect_args": {"number": "01012345678"}}
+  ]
+}

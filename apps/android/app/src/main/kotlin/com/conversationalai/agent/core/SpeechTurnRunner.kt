@@ -217,6 +217,10 @@ class SpeechTurnRunner(
                     ),
                 )
                 Log.i(TAG, "tool ${call.name} -> ok=${result.ok}" + if (nativeTools) " (native)" else "")
+                // Eval line (logcat-only, gid-tagged, both backends): carries the actual arguments
+                // so the tool-eval harness can score argument extraction. The persistent JSONL keeps
+                // recording arg COUNT only (raw values stay out of the uploaded-evidence log).
+                Log.i(EVAL_TAG, "gid=$gid tool=${call.name} ok=${result.ok} native=$nativeTools args=${argsToJson(call.arguments)}")
             }
         }
         val llmResult = try {
@@ -340,6 +344,13 @@ class SpeechTurnRunner(
 
     private fun elapsedSince(startNs: Long): Long = (System.nanoTime() - startNs) / 1_000_000
 
+    /** Compact JSON for a string-valued argument map (for the ToolEval logcat line). */
+    private fun argsToJson(args: Map<String, String>): String =
+        args.entries.joinToString(",", "{", "}") { (k, v) -> "\"${jsonEsc(k)}\":\"${jsonEsc(v)}\"" }
+
+    private fun jsonEsc(s: String): String =
+        s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", " ")
+
     /** Written -> spoken normalization (numbers, clock times, percents) for the TTS, guarded by
      *  the same NFKD token budget TtsInputBuilder enforces: verbalized numbers EXPAND the clause
      *  (often 2-4x), so when the result would overflow T=64 keep the written form — the engine
@@ -374,6 +385,8 @@ class SpeechTurnRunner(
 
     companion object {
         private const val TAG = "SpeechTurnRunner"
+        /** Dedicated logcat tag the tool-eval harness greps for (carries actual call arguments). */
+        private const val EVAL_TAG = "ToolEval"
         /** Generation steps per turn (initial + after tool responses). Bounded so a confused
          *  model can't chain tool calls while the user waits in silence. */
         const val MAX_TOOL_STEPS = 3
