@@ -89,6 +89,13 @@ MUST drop events whose `generation_id` is stale. This is the race guard.
   rolling summary. Never re-prefill unbounded history (prefill latency, stage 3).
 - **Response caps:** hard cap on generated tokens per turn and on queued TTS audio, so a runaway
   generation can't overheat or monopolize the device.
+- **RECOVERING — audible failure cues (implemented 2026-06-20, A2):** the `error → RECOVERING →
+  LISTENING` edge is live. A turn that would otherwise end in SILENCE — ASR heard nothing
+  recognizable (gated on a speech-energy heuristic so noise blips stay quiet), the LLM returned an
+  empty answer with no tool call, or every TTS clause dropped — transitions to RECOVERING and plays
+  a short language-matched spoken cue (`core/AudibleFeedback` + `FailureCuePlayer`), falling back to
+  a non-speech earcon when TTS itself is the failure. Emits `feedback.cue`; RECOVERING surfaces a
+  localized status in the UI.
 
 ## Power / thermal policy
 

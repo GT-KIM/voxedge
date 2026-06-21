@@ -52,8 +52,14 @@ a **second LLM backend** (Gemma 4 E2B via Google LiteRT-LM on the GPU, switchabl
 Genie path); a small **agentic layer** — 13 offline on-device tools (clock, calculator, calendar,
 dialer, SMS, navigation, …) plus a durable **memory** the model writes to and that is grounded back
 into the system prompt across sessions; a deepened, few-shot system prompt; and a **fully localized
-UI** that follows the conversation language. Tool *calling* on a 4B/2B model is still hit-or-miss, so
-it's wired honestly rather than claimed as solved.
+UI** that follows the conversation language; and **audible failure cues** so a turn never ends in
+silence (a short spoken "I didn't catch that" when ASR comes up empty, an earcon when the synthesizer
+itself fails). Tool *calling* on a 4B/2B model is hit-or-miss — but now **measured, not hand-waved**:
+an on-device harness scores tool selection and argument extraction per backend against a KO/EN golden
+set. The baseline was stark (Genie 45 % English tool-selection but 0 % Korean; Gemma 0 %), and it
+immediately paid for itself — it traced Gemma's zero to a prompt-routing bug (the native path got no
+"use the tool" directive at all) and the fix took Gemma from 0 to 27 % with no new false positives.
+Korean tool-calling stays the honest open problem. Wired and measured, not claimed as solved.
 
 ## What ate the days (the parts worth reading)
 

@@ -5,8 +5,13 @@
 > GPU — the demo's selected default), not Genie-only. ASR is **owned sherpa-onnx** (Korean zipformer
 > int8 primary, SenseVoice for English), not platform `SpeechRecognizer` — the "Phase A platform ASR"
 > path below was never taken. On top of the loop there's an **agentic layer** (13 offline tools +
-> durable memory grounded into the prompt) and a **fully language-localized UI**. Treat the
-> module/threading design below as accurate; the ASR-source and single-LLM notes are superseded.
+> durable memory grounded into the prompt) and a **fully language-localized UI**. Most recently
+> (2026-06-20/21): tool calls from BOTH backends record uniformly via a single `ToolRegistry`
+> observer (`toolsUsed` + a `native` event flag); a turn never ends in silence (`AudibleFeedback` +
+> `FailureCuePlayer` voice a cue on ASR-empty / generation-fail / TTS-fail, surfacing the
+> `RECOVERING` state); and tool-calling is now measured by an on-device harness
+> (`tools/llm/eval_tools.py`, see `docs/llm/tool_eval.md`). Treat the module/threading design below
+> as accurate; the ASR-source and single-LLM notes are superseded.
 
 Status: design, pre-code. Maps the platform-neutral specs to concrete Android modules, threads,
 and runtime integrations. Specs this implements: `speech_loop_state_machine.md` (states + power),

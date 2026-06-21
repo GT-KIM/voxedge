@@ -90,7 +90,8 @@ user speech → ASR → LLM step ─ plain text ──────────�
   `set_alarm` (system clock app, `SET_ALARM` normal permission), `battery_status`, `flashlight`.
   Tool *results* are model-facing plain English; the model answers the user in the user's
   language. **(Extended to 13 tools + durable memory in v2 — see §5.)**
-- Events: `tool.call` / `tool.result` / `tool.step_limit` (additive, runtime-log-v1).
+- Events: `tool.call` / `tool.result` / `tool.step_limit` (additive, runtime-log-v1; `tool.call` /
+  `tool.result` later gained a `native` flag — see §6 A1).
 
 Next steps on this foundation: LiteRT-LM's native `tools`/`automaticToolCalling` for the Gemma
 path; richer tools (notes, calendar, media, app launch); user confirmation policy for
@@ -203,10 +204,42 @@ destructive/outward actions; multi-call steps.
   (HUME / ChatGPT / Claude). Backend-agnostic (applies to both Genie and Gemma).
 - **Fully localized UI** (`ui/UiStrings`): the whole on-screen UI follows the conversation language —
   an English session is all-English, a Korean session all-Korean.
-- **Honest caveat:** tool *elicitation* on a 4B/2B model is still hit-or-miss, and weaker in Korean.
-  The prompt-convention path (Genie, `[TOOL_CALL]`) and native function calling (Gemma) are both
-  wired; reliability varies. Native (LiteRtToolAdapter) tool calls don't yet surface in the turn
-  record's `toolsUsed` — a known observability gap.
+- **Honest caveat:** tool *elicitation* on a 4B/2B model is hit-or-miss and weaker in Korean. Both
+  paths are wired; reliability varies. This is now **measured, not asserted** — see §6 (B1) for the
+  numbers and §6 (D1) for the first improvement.
 - **CI**: a GitHub Actions workflow runs the Python contract suite (`tests/`) on push/PR.
 - The device's currently-selected backend in the demo is **Gemma 4 E2B (LiteRT-LM)**; Qwen3-4B Genie
   remains the primary/measured backend.
+
+## 6. Robustness + tool-call measurement (2026-06-20/21, device-verified)
+
+- **Unified tool-call observability (A1).** A single `ToolRegistry.onDispatch` observer — both the
+  prompt-convention loop and native function calling funnel through `dispatch` — records every tool
+  on the turn record's `toolsUsed` and emits `tool.call` / `tool.result` with a `native` flag. This
+  closes the prior gap where native (LiteRtToolAdapter) calls were invisible to the turn record and
+  the event log; verified on device (Gemma `calculate` → `native:true`). It also made native calls
+  visible to the eval harness for the first time.
+- **Audible failure cues (A2).** A turn no longer ends in silence on a voice-only device. When ASR
+  heard nothing recognizable (and the audio was likely speech), the LLM returned an empty answer with
+  no tool, or every TTS clause dropped, the controller plays a short language-matched spoken cue
+  (`core/AudibleFeedback` + `FailureCuePlayer`) — falling back to a non-speech earcon if the TTS
+  engine itself is the failure — and surfaces the long-unused `RECOVERING` state for a localized
+  visual cue. Logged as `feedback.cue`. The decision logic and earcon are pure + unit-tested; audio
+  I/O stays out of the controller (`FailureCuePlayer`).
+- **Device-tool unit tests (A3).** The 7 intent-backed tools' validation/formatting (timer, alarm,
+  flashlight, battery, calendar, dial, sms, navigate) was extracted into a pure `DeviceToolLogic` and
+  unit-tested without a `Context` (coercion, clamping, phone-number filtering, calendar time-window
+  math).
+- **Tool-call eval harness (B1).** `tools/llm/eval_tools.py` + `tools/llm/tool_eval_set.json` (KO/EN
+  golden set) score tool selection, argument extraction, and chat false-positives per backend, reading
+  a gid-tagged `ToolEval` logcat line for the actual arguments (so the privacy-preserving JSONL still
+  logs counts only). Validated in CI by `tests/test_tool_eval_set.py`; full writeup in
+  `docs/llm/tool_eval.md`. **Baseline (Z Fold7, 16 safe cases):** Genie selection 45 % (EN 5/6,
+  KO 0/5), args 4/4; Gemma 0/11. Genie's prompt-convention ≫ Gemma native FC; Korean ~0 % on both.
+- **Tool-policy split (D1).** Root cause of Gemma's 0 %: the forceful "you MUST use the tool"
+  directives lived only in the prompt-convention `toolsModule`, passed as `emptyList()` for native FC.
+  Split into a backend-neutral `TOOL_POLICY` (when-to-use + Korean triggers, shown to BOTH backends)
+  vs the `[TOOL_CALL]` syntax (prompt-convention only); `PromptAssembler.systemPrompt(…, nativeTools=)`
+  routes. **Result: Gemma 0/11 → 3/11**, Genie 45 % unchanged, 0 false positives. Settled limits:
+  Gemma still skips `calculate`/`remember` (native FC trusts its own math); Genie's Korean is
+  structurally prompt-resistant (a verbatim Korean exemplar did not move it).

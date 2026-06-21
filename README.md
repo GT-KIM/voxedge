@@ -48,7 +48,11 @@ whole answer. All three engines stay resident in one process (LLM + TTS on the N
 On top of the loop there's a small **agentic** layer: an on-device tool registry (clock, calculator,
 calendar, dialer, SMS, navigation) and a durable **memory** the model can write to and that is
 grounded back into the system prompt across sessions — all offline. Tool *calling* on a 4B/2B model
-is still hit-or-miss, so it's wired and honest rather than claimed as solved.
+is hit-or-miss, but it's **measured, not hand-waved**: an on-device harness
+([`tools/llm/eval_tools.py`](tools/llm/eval_tools.py), writeup in [tool_eval.md](docs/llm/tool_eval.md))
+scores tool selection and argument extraction per backend against a KO/EN golden set — which is how a
+prompt-routing bug that left one backend at 0 % got found and fixed (0 → 27 %). And a turn never ends
+in silence: an **audible failure cue** speaks up when ASR comes up empty or synthesis fails.
 
 ## Measured numbers (Galaxy Z Fold7 / Snapdragon SM8750, airplane mode)
 
@@ -82,7 +86,8 @@ harness are in the [teardown](docs/teardown.md) and [`tools/asr/`](tools/asr/).
 | Multi-backend LLM (Qwen3-4B Genie · Gemma 4 E2B LiteRT-LM) | ✅ switchable in-app |
 | Bilingual, fully-localized UI + replies (Korean / English) | ✅ works |
 | Durable cross-session memory (facts grounded into the prompt) | ✅ works |
-| On-device tools (clock, calculator, calendar, dial, SMS, navigation, memory) | 🧪 wired; small-model tool-calling reliability varies by model/language |
+| On-device tools (clock, calculator, calendar, dial, SMS, navigation, memory) | 🧪 wired + **measured** (eval harness); selection varies by model/language (Genie EN ~45 % / KO ~0 %) — see [tool_eval.md](docs/llm/tool_eval.md) |
+| Audible failure cues (never end a turn in silence) | ✅ works (spoken cue / earcon, language-matched) |
 | ASR under loud background music | ⚠️ improved (per-language ASR model), not solved |
 | LLM answer quality | ⚠️ 4B-class on-device; prompt/history-tuned, not GPT-class |
 | Barge-in (interrupt mid-answer) | 🧪 experimental, off by default (AEC self-interrupt) |
