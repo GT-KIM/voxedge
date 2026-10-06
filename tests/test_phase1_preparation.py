@@ -67,10 +67,12 @@ class Phase1PreparationTests(unittest.TestCase):
             "android_device_smoke_test_with_genie-t2t-run",
             llm["next_artifact_required"],
         )
-        self.assertEqual(
-            "pending_no_connected_android_device",
-            llm["device_smoke_test"]["status"],
-        )
+        # The Genie smoke test ran on the SM8750 device on 2026-05-30; the manifest records that
+        # and must not carry a host-specific absolute path (public repo).
+        smoke = llm["device_smoke_test"]
+        self.assertTrue(smoke["status"].startswith("done_2026-05-30"))
+        self.assertNotIn(":/", smoke["adb_path"])
+        self.assertNotIn("Users", smoke["adb_path"])
         self.assertEqual(2532949886, llm["prepared_artifacts"]["download_zip_bytes"])
         self.assertEqual(4096, llm["prepared_artifacts"]["validated_context_size"])
         self.assertEqual(4, len(llm["prepared_artifacts"]["context_binary_parts"]))

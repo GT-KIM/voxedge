@@ -75,7 +75,7 @@ Readings:
   README's 0.55–0.66 s was measured 2026-05-31 before the prompt deepening, prosody chunking, and
   tool policy landed). The language-switch TTFT also grew (1.2 s vs 0.5–0.65 s), consistent with a
   much longer system prompt to re-prefill. Not isolated to a cause yet; MCP encode/decode measured
-  ~1 ms per leg, so it is not the MCP boundary. Tracked in `docs/PLAN.md`.
+  ~1 ms per leg, so it is not the MCP boundary. Isolation of the cause is open work.
 
 Repro: `python tools/llm/sustained_run.py --label qwen3-4b-genie --minutes 10` (Qwen3 selected).
 

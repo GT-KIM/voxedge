@@ -82,9 +82,9 @@
         ]
       },
       "device_smoke_test": {
-        "status": "pending_no_connected_android_device",
-        "adb_path": "C:/Users/PC/AppData/Local/Android/Sdk/platform-tools/adb.exe",
-        "adb_devices_result": "no devices attached",
+        "status": "done_2026-05-30_genie_runs_on_sm8750_see_docs_demo_sm8750_measurements",
+        "adb_path": "<ANDROID_SDK>/platform-tools/adb (host-specific; not tracked)",
+        "adb_devices_result": "SM-F966N attached at the time of the smoke test",
         "required_runtime": [
           "tools/model_compile/qairt/extracted/qairt/2.46.0.260424/bin/aarch64-android/genie-t2t-run",
           "tools/model_compile/qairt/extracted/qairt/2.46.0.260424/lib/aarch64-android/libGenie.so"
