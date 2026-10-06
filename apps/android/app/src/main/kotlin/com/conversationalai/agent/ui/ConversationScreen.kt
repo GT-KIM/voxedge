@@ -26,6 +26,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -442,6 +443,29 @@ fun DebugRuntimePanel(
             ) {
                 Text("ASR test (wav)")
             }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                enabled = !state.busy,
+                checked = state.platformAsr,
+                onCheckedChange = { onAction(ConversationAction.TogglePlatformAsr) },
+            )
+            Text(
+                "Platform ASR (test; owned offline engine is the default)",
+                modifier = Modifier.padding(start = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = state.mcpEndpoint,
+                onCheckedChange = { onAction(ConversationAction.ToggleMcpEndpoint) },
+            )
+            Text(
+                "External MCP endpoint (debug; adb forward localabstract:voxedge-mcp-tools / -tts)",
+                modifier = Modifier.padding(start = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (state.llmOutput.isNotBlank()) {
             Text(state.llmOutput, style = MaterialTheme.typography.bodySmall)

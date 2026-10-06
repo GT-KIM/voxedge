@@ -67,6 +67,8 @@ struct ConversationUiState: Equatable {
     var recording: Bool
     var handsFree: Bool
     var bargeIn: Bool
+    var platformAsr: Bool
+    var mcpEndpoint: Bool
     var diagnosticsOpen: Bool
     var loopState: SpeechLoopUiState
     var transcript: [TranscriptItem]
@@ -88,6 +90,8 @@ struct ConversationUiState: Equatable {
             recording: false,
             handsFree: false,
             bargeIn: false,
+            platformAsr: false,
+            mcpEndpoint: false,
             diagnosticsOpen: false,
             loopState: .idle,
             transcript: [

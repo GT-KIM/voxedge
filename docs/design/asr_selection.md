@@ -1,13 +1,21 @@
 # Offline ASR Selection (R2)
 
-> **UPDATE — current state (R2 RESOLVED).** The app does NOT use platform/OS ASR. It ships **owned,
+> **UPDATE — current state (R2 RESOLVED).** The product path does not use platform/OS ASR (a test option exists, see below). It ships **owned,
 > offline sherpa-onnx** ASR, selected per language: **Korean = a Korean zipformer transducer (int8,
 > CER ~0.008 @ ~51 ms)** as the primary, with Dolphin base CTC only as a fallback; **English =
 > SenseVoice int8**. A script-consistency filter rejects foreign-script hallucinations, and a
 > dual-VAD endpointer drives the speculative-turn path. The GTCRN denoiser is present but **disabled
 > in the main loop** (it did not improve CER). The "Phase A platform ASR / Phase B owned model" plan
-> below is the original design discussion; Phase A (platform ASR) was never integrated — the owned
-> sherpa-onnx path was implemented directly. Kept for rationale/history.
+> below is the original design discussion; the owned sherpa-onnx path was implemented directly.
+> Kept for rationale/history.
+>
+> **2026-10-06:** the platform recognizer is now available as a **test option** behind the same
+> `AsrEngine` boundary (`asr/PlatformAsr.kt` + `SwitchableAsr`): on-device recognizer only
+> (`createOnDeviceSpeechRecognizer`), gated on an installed language pack, fed the loop's captured
+> utterance through `EXTRA_AUDIO_SOURCE`, selectable from diagnostics and the `debug_asr_wav` adb
+> hook, never persisted. First comparison on the Korean test clip (Z Fold7): owned zipformer ~80-110 ms,
+> platform ~250-300 ms, both transcribe it correctly (spacing differs). The owned engine remains the
+> default and the basis of the offline claim.
 
 Date: 2026-05-30. Requirements (confirmed with project leader): **Korean + English bilingual**,
 **streaming** (real-time partials + fast endpoint), **balanced** accuracy/footprint, **fully

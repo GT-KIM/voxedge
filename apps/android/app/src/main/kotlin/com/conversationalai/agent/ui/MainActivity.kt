@@ -14,6 +14,10 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.conversationalai.agent.asr.OfflineAsr
+import com.conversationalai.agent.asr.PlatformAsr
+import com.conversationalai.agent.asr.SwitchableAsr
+import com.conversationalai.agent.core.mcp.McpExternalEndpoint
+import com.conversationalai.agent.core.mcp.McpTts
 import com.conversationalai.agent.audio.AudioCapture
 import com.conversationalai.agent.audio.PcmPlayer
 import com.conversationalai.agent.audio.SpeechEnhancer
@@ -32,6 +36,13 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 private const val EXTRA_DEBUG_TYPED_TURN = "debug_typed_turn"
+/** Headless ASR engine comparison: transcribe filesDir/asr_test/<name>.wav with the owned engine
+ *  ("owned") or the platform recognizer ("platform"); optional `debug_asr_lang` ko|en. */
+private const val EXTRA_DEBUG_ASR_WAV = "debug_asr_wav"
+private const val EXTRA_DEBUG_ASR_ENGINE = "debug_asr_engine"
+private const val EXTRA_DEBUG_ASR_LANG = "debug_asr_lang"
+/** `--ez debug_mcp_endpoint true|false`: open/close the external MCP endpoints headlessly. */
+private const val EXTRA_DEBUG_MCP_ENDPOINT = "debug_mcp_endpoint"
 
 /**
  * Phase 3 build-step-2 slice: type text -> synthesize one clause on the HTP -> play via AudioTrack.
@@ -46,8 +57,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var settingsController: SettingsController
     private var initialBargeIn = false
     private lateinit var asr: OfflineAsr
+    // Platform recognizer behind the same AsrEngine boundary, selectable from diagnostics for
+    // comparison runs; the controller always talks to the switch (owned engine by default).
+    private lateinit var platformAsr: PlatformAsr
+    private lateinit var asrSwitch: SwitchableAsr
+    // External MCP endpoints (debug): the SAME tool server the loop uses + a TTS server over the
+    // same engine. Created on first use, never persisted, off by default.
+    private var mcpEndpoints: List<McpExternalEndpoint> = emptyList()
     private lateinit var enhancer: SpeechEnhancer
     private lateinit var controller: ConversationController
+    private lateinit var toolRegistry: com.conversationalai.agent.core.tools.ToolRegistry
     private lateinit var eventLogger: RuntimeEventLogger
     private val capture = AudioCapture()
     private var initOk = false
@@ -132,6 +151,8 @@ class MainActivity : ComponentActivity() {
         llm = runtime.llm
         llmModel = runtime.llmModel
         asr = runtime.asr
+        platformAsr = PlatformAsr(this)
+        asrSwitch = SwitchableAsr(owned = asr, platform = platformAsr)
         enhancer = runtime.enhancer
         initOk = runtime.initOk
         llmOk = runtime.llmOk
@@ -161,6 +182,7 @@ class MainActivity : ComponentActivity() {
 
         // Offline tool registry + the durable memory store it shares (for prompt grounding).
         val deviceTools = com.conversationalai.agent.devicetools.DeviceTools.build(this)
+        toolRegistry = deviceTools.registry
 
         // Step-5 state machine: single canonical mic->ASR->LLM->TTS pipeline (hands-free + one-shot).
         controller = ConversationController(
@@ -169,7 +191,7 @@ class MainActivity : ComponentActivity() {
             // (raw == gtcrn) and the Dolphin win (CER 0.30) was on the RAW pre-denoise signal. Feed
             // ASR the raw capture. (enhancer kept available for the debug Talk button / experiments.)
             enhancer = null,
-            asr = asr, llm = llm, tts = tts, inputBuilder = inputBuilder,
+            asr = asrSwitch, llm = llm, tts = tts, inputBuilder = inputBuilder,
             scope = lifecycleScope,
             eventLogger = eventLogger,
             onState = { convState = it },
@@ -230,6 +252,13 @@ class MainActivity : ComponentActivity() {
      *  locked: `adb shell am start -n .../.ui.MainActivity --es debug_typed_turn "hello"`.
      *  Results land in logcat + the runtime JSONL event log. */
     private fun handleDebugTurnIntent(intent: android.content.Intent?) {
+        handleDebugAsrIntent(intent)
+        if (intent?.hasExtra(EXTRA_DEBUG_MCP_ENDPOINT) == true) {
+            val want = intent.getBooleanExtra(EXTRA_DEBUG_MCP_ENDPOINT, false)
+            val on = mcpEndpoints.any { it.isRunning }
+            if (want != on) handleToggleMcpEndpoint(on, {}, { Log.i(TAG, "debug_mcp_endpoint: $it") })
+            else Log.i(TAG, "debug_mcp_endpoint: already ${if (on) "on" else "off"}")
+        }
         val text = intent?.getStringExtra(EXTRA_DEBUG_TYPED_TURN)?.takeIf { it.isNotBlank() } ?: return
         Log.i(TAG, "debug_typed_turn: \"$text\"")
         lifecycleScope.launch {
@@ -237,6 +266,44 @@ class MainActivity : ComponentActivity() {
             val reply = sessionItems.lastOrNull { it.role == TranscriptRole.ASSISTANT }?.text ?: ""
             Log.i(TAG, "debug_typed_turn reply: \"$reply\"")
             Log.i(TAG, "debug_typed_turn done: $summary")
+        }
+    }
+
+    /** Headless ASR engine comparison (dev-only):
+     *  `adb shell am start -n .../.ui.MainActivity --es debug_asr_wav ko --es debug_asr_engine platform`
+     *  transcribes filesDir/asr_test/ko.wav through the chosen engine (platform = on-device
+     *  SpeechRecognizer after the availability gate) and logs `debug_asr_wav done: ...`. The
+     *  engine selection is reverted to the owned engine afterwards. */
+    private fun handleDebugAsrIntent(intent: android.content.Intent?) {
+        val wavName = intent?.getStringExtra(EXTRA_DEBUG_ASR_WAV)?.takeIf { it.isNotBlank() } ?: return
+        val engine = intent.getStringExtra(EXTRA_DEBUG_ASR_ENGINE) ?: "owned"
+        val lang = intent.getStringExtra(EXTRA_DEBUG_ASR_LANG) ?: wavName.take(2)
+        Log.i(TAG, "debug_asr_wav: wav=$wavName engine=$engine lang=$lang")
+        lifecycleScope.launch {
+            val wav = File(filesDir, "asr_test/$wavName.wav")
+            val result = withContext(Dispatchers.Default) {
+                if (!wav.exists()) return@withContext "missing ${wav.path}"
+                asr.setLanguage(lang)
+                platformAsr.setLanguage(lang)
+                var gate = ""
+                if (engine == "platform") {
+                    val availability = platformAsr.checkAvailability()
+                    gate = " usable=${availability.usable} (${availability.detail})"
+                    if (!availability.usable || !asrSwitch.selectPlatform(true)) {
+                        return@withContext "engine=platform NOT RUN$gate"
+                    }
+                }
+                try {
+                    val w = com.k2fsa.sherpa.onnx.WaveReader.readWave(wav.absolutePath)
+                    val t0 = System.nanoTime()
+                    val heard = asrSwitch.transcribe(w.samples, w.sampleRate)
+                    val ms = (System.nanoTime() - t0) / 1_000_000
+                    "engine=${asrSwitch.name()} ms=$ms heard=\"$heard\"$gate"
+                } finally {
+                    asrSwitch.selectPlatform(false)
+                }
+            }
+            Log.i(TAG, "debug_asr_wav done: $result")
         }
     }
 
@@ -339,6 +406,8 @@ class MainActivity : ComponentActivity() {
             onStopRecording = ::handleStopRecording,
             onToggleConversation = ::handleToggleConversation,
             onToggleBargeIn = ::handleToggleBargeIn,
+            onTogglePlatformAsr = ::handleTogglePlatformAsr,
+            onToggleMcpEndpoint = ::handleToggleMcpEndpoint,
             onCancelCurrentTurn = ::handleCancelCurrentTurn,
             onAsrTest = ::handleAsrTest,
         )
@@ -448,6 +517,7 @@ class MainActivity : ComponentActivity() {
         setMsg("switching ASR to $next...")
         lifecycleScope.launch {
             val ok = withContext(Dispatchers.Default) { asr.setLanguage(next) }
+            platformAsr.setLanguage(next)
             if (ok) {
                 setAsrLang(next)
                 setMsg("ASR language: $next")
@@ -488,7 +558,7 @@ class MainActivity : ComponentActivity() {
                 if (raw.isEmpty()) return@withContext "" to 0L
                 val (clean, sr) = if (enhanceOk) enhancer.enhance(raw, 16000) else raw to 16000
                 val t0 = System.nanoTime()
-                val t = asr.transcribe(clean, sr)
+                val t = asrSwitch.transcribe(clean, sr)
                 t to (System.nanoTime() - t0) / 1_000_000
             }
             Log.i(TAG, "heard (${asrMs}ms): $heard")
@@ -530,6 +600,68 @@ class MainActivity : ComponentActivity() {
         settingsController.setBargeIn(next)   // applies to the controller + persists
     }
 
+    /** Diagnostics test option. Enabling checks that the on-device recognizer exists and the
+     *  current language pack is installed; otherwise the switch stays off and the reason is shown.
+     *  Never persisted: every launch starts on the owned offline engine. */
+    private fun handleTogglePlatformAsr(
+        current: Boolean,
+        setPlatformAsr: (Boolean) -> Unit,
+        setBusy: (Boolean) -> Unit,
+        setMsg: (String) -> Unit,
+    ) {
+        if (current) {
+            asrSwitch.selectPlatform(false)
+            setPlatformAsr(false)
+            setMsg("ASR: ${asrSwitch.name()}")
+            eventLogger.log("control.asr_engine_selected", attributes = mapOf("engine" to asrSwitch.name()))
+            return
+        }
+        setBusy(true)
+        setMsg("checking platform ASR...")
+        lifecycleScope.launch {
+            val availability = withContext(Dispatchers.Default) { platformAsr.checkAvailability() }
+            if (availability.usable && asrSwitch.selectPlatform(true)) {
+                setPlatformAsr(true)
+                setMsg("ASR: ${asrSwitch.name()} - ${availability.detail}")
+            } else {
+                setPlatformAsr(false)
+                setMsg("platform ASR unavailable: ${availability.detail}")
+            }
+            Log.i(TAG, "platform ASR check: usable=${availability.usable} ${availability.detail}")
+            eventLogger.log(
+                "control.asr_engine_selected",
+                attributes = mapOf("engine" to asrSwitch.name(), "platform_usable" to availability.usable),
+            )
+            setBusy(false)
+        }
+    }
+
+    /** Diagnostics debug option: open/close the external MCP endpoints (abstract local sockets).
+     *  Host access: `adb forward tcp:7777 localabstract:voxedge-mcp-tools` then
+     *  `python tools/mcp/mcp_client.py --port 7777 tools/list`. Never persisted. */
+    private fun handleToggleMcpEndpoint(current: Boolean, setEnabled: (Boolean) -> Unit, setMsg: (String) -> Unit) {
+        if (current) {
+            mcpEndpoints.forEach { it.stop() }
+            setEnabled(false)
+            setMsg("external MCP endpoint off")
+            eventLogger.log("control.mcp_endpoint", attributes = mapOf("enabled" to false))
+            return
+        }
+        if (mcpEndpoints.isEmpty()) {
+            mcpEndpoints = listOf(
+                McpExternalEndpoint.forTools(toolRegistry.mcp.server),
+                McpExternalEndpoint.forTts(McpTts(tts, inputBuilder)),
+            )
+        }
+        val ok = mcpEndpoints.map { it.start() }.all { it }
+        setEnabled(ok)
+        setMsg(
+            if (ok) "external MCP endpoint on: ${McpExternalEndpoint.TOOLS_SOCKET}, ${McpExternalEndpoint.TTS_SOCKET}"
+            else "external MCP endpoint failed to start (see logcat McpExternal)",
+        )
+        eventLogger.log("control.mcp_endpoint", attributes = mapOf("enabled" to ok))
+    }
+
     private fun handleCancelCurrentTurn(
         setRecording: (Boolean) -> Unit,
         setConv: (Boolean) -> Unit,
@@ -553,7 +685,7 @@ class MainActivity : ComponentActivity() {
             val (txt, ms) = withContext(Dispatchers.Default) {
                 val w = com.k2fsa.sherpa.onnx.WaveReader.readWave(wav.absolutePath)
                 val t0 = System.nanoTime()
-                val t = asr.transcribe(w.samples, w.sampleRate)
+                val t = asrSwitch.transcribe(w.samples, w.sampleRate)
                 t to (System.nanoTime() - t0) / 1_000_000
             }
             Log.i(TAG, "ASR ${ms}ms -> $txt")
@@ -567,6 +699,8 @@ class MainActivity : ComponentActivity() {
         tts.release()
         if (::llm.isInitialized) llm.release()
         if (::asr.isInitialized) asr.release()
+        if (::platformAsr.isInitialized) platformAsr.release()
+        mcpEndpoints.forEach { it.stop() }
         if (::enhancer.isInitialized) enhancer.release()
         if (::controller.isInitialized) controller.stop()
         super.onDestroy()

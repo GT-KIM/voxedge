@@ -113,6 +113,10 @@ data class ConversationUiState(
     val recording: Boolean = false,
     val handsFree: Boolean = false,
     val bargeIn: Boolean = false,
+    /** Diagnostics test option: ASR routed to the platform recognizer instead of the owned engine. */
+    val platformAsr: Boolean = false,
+    /** Diagnostics: external MCP endpoint (local sockets) is listening. */
+    val mcpEndpoint: Boolean = false,
     val diagnosticsOpen: Boolean = false,
     val settingsOpen: Boolean = false,
     val settings: SettingsUiState = SettingsUiState(),

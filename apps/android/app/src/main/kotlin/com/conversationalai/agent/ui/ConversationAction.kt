@@ -18,6 +18,10 @@ sealed interface ConversationAction {
     data object StopPushToTalk : ConversationAction
     data object CancelCurrentTurn : ConversationAction
     data object ToggleBargeIn : ConversationAction
+    /** Diagnostics: route ASR to the platform recognizer (test only; owned engine is default). */
+    data object TogglePlatformAsr : ConversationAction
+    /** Diagnostics: expose the in-app MCP servers on local sockets for host inspection (off by default). */
+    data object ToggleMcpEndpoint : ConversationAction
     data object OpenDiagnostics : ConversationAction
     data object CloseDiagnostics : ConversationAction
 

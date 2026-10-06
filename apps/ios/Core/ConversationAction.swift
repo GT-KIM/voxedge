@@ -15,6 +15,8 @@ enum ConversationAction: Equatable {
     case stopPushToTalk
     case cancelCurrentTurn
     case toggleBargeIn
+    case togglePlatformAsr
+    case toggleMcpEndpoint
     case openDiagnostics
     case closeDiagnostics
     // Settings sheet (parity with Android's settings actions).

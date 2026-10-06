@@ -39,6 +39,8 @@ fun ConversationRoute(
     onStopRecording: ((Boolean) -> Unit, (Boolean) -> Unit, (String) -> Unit, (String) -> Unit) -> Unit,
     onToggleConversation: (Boolean, (Boolean) -> Unit, () -> Unit) -> Unit,
     onToggleBargeIn: (Boolean, (Boolean) -> Unit) -> Unit,
+    onTogglePlatformAsr: (Boolean, (Boolean) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
+    onToggleMcpEndpoint: (Boolean, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onCancelCurrentTurn: ((Boolean) -> Unit, (Boolean) -> Unit, (Boolean) -> Unit, (String) -> Unit) -> Unit,
     onAsrTest: ((Boolean) -> Unit, (String) -> Unit) -> Unit,
 ) {
@@ -50,6 +52,8 @@ fun ConversationRoute(
     var recording by remember { mutableStateOf(false) }
     var conv by remember { mutableStateOf(false) }
     var bargeIn by remember { mutableStateOf(initialBargeIn) }
+    var platformAsr by remember { mutableStateOf(false) }   // test option; never persisted
+    var mcpEndpoint by remember { mutableStateOf(false) }   // debug option; never persisted
     var diagnosticsOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var sessionsOpen by remember { mutableStateOf(false) }
@@ -69,6 +73,8 @@ fun ConversationRoute(
         recording = recording,
         handsFree = conv,
         bargeIn = bargeIn,
+        platformAsr = platformAsr,
+        mcpEndpoint = mcpEndpoint,
         diagnosticsOpen = diagnosticsOpen,
         settingsOpen = settingsOpen,
         settings = settings,
@@ -179,6 +185,12 @@ fun ConversationRoute(
             }
             ConversationAction.ToggleBargeIn -> {
                 onToggleBargeIn(bargeIn) { bargeIn = it }
+            }
+            ConversationAction.TogglePlatformAsr -> {
+                onTogglePlatformAsr(platformAsr, { platformAsr = it }, { busy = it }, { msg = it })
+            }
+            ConversationAction.ToggleMcpEndpoint -> {
+                onToggleMcpEndpoint(mcpEndpoint, { mcpEndpoint = it }, { msg = it })
             }
             ConversationAction.OpenDiagnostics -> diagnosticsOpen = true
             ConversationAction.CloseDiagnostics -> diagnosticsOpen = false

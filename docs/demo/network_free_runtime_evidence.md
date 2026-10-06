@@ -80,9 +80,14 @@ Implementation:
 
 Network-free boundary:
 
-- No Android `SpeechRecognizer`.
-- No cloud ASR endpoint.
-- No network fallback path.
+- The product path (`OfflineAsr`, the default) contains no Android `SpeechRecognizer`, no cloud
+  ASR endpoint, and no network fallback.
+- A separate **test option** (`asr/PlatformAsr.kt`, 2026-10-06) routes the same captured utterance
+  to the OS recognizer for engine comparison. It uses `createOnDeviceSpeechRecognizer` only
+  (audio processed on the device by the system's speech service), is gated on an installed
+  on-device language pack via `checkRecognitionSupport`, is selected from the diagnostics panel
+  or the `debug_asr_wav` adb hook, and resets to the owned engine on every launch. The offline
+  claim rests on the owned engine; the platform path is not part of it.
 
 Known limitation:
 
