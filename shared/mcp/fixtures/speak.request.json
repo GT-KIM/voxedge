@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"speak","arguments":{"text":"It is three in the afternoon.","language":"en","clause_index":0,"chunk_id":"c0","flow_steps":6,"generation_id":17}}}

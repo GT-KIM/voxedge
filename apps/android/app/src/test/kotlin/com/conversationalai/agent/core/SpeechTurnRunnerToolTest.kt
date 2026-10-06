@@ -258,6 +258,57 @@ class SpeechTurnRunnerToolTest {
         assertEquals(0, clock.calls)
     }
 
+    @Test
+    fun mcpTrafficForToolsAndEveryClauseIsLoggedAcrossTheWholeTurn() = runBlocking {
+        // Both boundaries are MCP: the tool call AND each clause's `speak`. The TTS consumer keeps
+        // running after the LLM finished, so the response/request pairs of the LAST clauses must
+        // still be logged (a tap detached too early lost them on device).
+        val llm = ScriptedSessionLlm(
+            listOf(
+                "[TOOL_CALL]{\"name\":\"get_datetime\",\"arguments\":{}}[/TOOL_CALL]",
+                "First clause here. Second clause here. Third clause here.",
+            ),
+        )
+        val file = java.io.File.createTempFile("runner-mcp", ".jsonl").also { it.deleteOnExit() }
+        val logger = RuntimeEventLogger(file)
+        val epoch = GenerationEpoch()
+
+        SpeechTurnRunner(
+            llm = llm,
+            tts = object : TtsEngine {
+                override fun version() = "fake-tts"
+                override fun synthesizeClause(inputs: TtsInputs, k: Int) = floatArrayOf(0f)
+            },
+            inputBuilder = RecordingInputBuilder(),
+            playerFactory = {
+                object : PcmStreamPlayer {
+                    override fun start() = Unit
+                    override fun write(pcm: FloatArray) = Unit
+                    override fun interrupt() = Unit
+                    override fun stopAndRelease() = Unit
+                }
+            },
+            generationEpoch = epoch,
+            onPlayerStarted = {},
+            onPlayerStopped = {},
+            onState = {},
+            onSpeakingStarted = {},
+            eventLogger = logger,
+            tools = ToolRegistry(listOf(FakeClockTool())),
+        ).run(epoch.next(), "full prompt", "what time is it", 0L, onDelta = {})
+
+        val lines = file.readLines()
+        val clauses = lines.count { it.contains("\"event\":\"tts.chunk_request\"") }
+        val requestsOut = lines.count { it.contains("\"event\":\"mcp.request\"") && it.contains("\"direction\":\"out\"") && it.contains("\"method\":\"tools/call\"") }
+        val responsesIn = lines.count { it.contains("\"event\":\"mcp.response\"") && it.contains("\"direction\":\"in\"") }
+        assertEquals(3, clauses)
+        // 1 tool call + 3 speak calls, each with its client-side request and response.
+        assertEquals(4, requestsOut)
+        assertEquals(4, responsesIn)
+        // No argument text leaks into the MCP events.
+        assertTrue(lines.filter { it.contains("\"event\":\"mcp.") }.none { it.contains("clause here") })
+    }
+
     // --- fixtures ---
 
     private fun runner(

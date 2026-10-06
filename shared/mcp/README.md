@@ -1,69 +1,126 @@
-# Conversation Contract (runtime events + durable MCP-style turn record)
+# Conversation Contract: MCP boundaries + runtime events + durable turn record
 
-This contract is the boundary between pipeline stages (ASR → prompt → LLM → TTS → playback)
-and between the two platforms. It replaces the earlier ad-hoc envelope with a concrete,
-versioned schema: [`conversation_events.schema.json`](conversation_events.schema.json)
-(schema_version `1.0.0`).
+This directory holds the contract between pipeline stages (ASR → prompt → LLM → tools → TTS →
+playback) and between the two platforms. It has three parts:
 
-## Why two layers
+1. **MCP boundaries** (this file, `fixtures/`). The LLM's tool calls and the LLM-output → TTS-input
+   clause handoff are **Model Context Protocol** exchanges: JSON-RPC 2.0 messages between an MCP
+   client on the LLM side and in-process MCP servers. MCP is a project requirement; the profile
+   below is what both platforms implement.
+2. **Runtime streaming events** ([`conversation_events.schema.json`](conversation_events.schema.json),
+   `Event`). Low-latency, ordered events between stages (`asr.final`, `llm.text_delta`,
+   `tts.chunk_request`, `tts.audio_chunk`, `control.*`, `mcp.request`, `mcp.response`, ...). Audio is
+   referenced by handle, never inlined. Each event carries `seq` and `t_mono_ms` for the latency
+   waterfall. The Android `RuntimeEventLogger` (`runtime-log-v1`) is the concrete realization.
+3. **Durable turn record** (same schema, `TurnRecord`). Aggregated after each turn: text, spoken
+   text, timings, `tool_calls`. A replay/analytics/eval log.
 
-On-device measurement (see `docs/demo/sm8750_measurements.md`) showed that first-audio
-latency requires **streaming LLM output into TTS clause-by-clause** — first-clause TTS is ~0.67 s
-only because we synthesize a short clause immediately, not after a full response. Gating TTS on a
-single complete "MCP object" would add seconds of dead air. So the contract is split:
+## MCP profile
 
-1. **Runtime streaming event channel** (low-latency, in-process / IPC). Ordered `Event`s flow
-   between stages as soon as data exists: `asr.partial/final`, `llm.text_delta`,
-   `tts.chunk_request` (one per clause), `tts.audio_chunk`, `control.barge_in/cancel`,
-   `runtime.thermal/degrade`, `error`. Audio is referenced by handle (`pcm_ref`), never inlined.
-   Each event carries `seq` (ordering) and `t_mono_ms` (for the latency waterfall).
+Protocol revision `2025-06-18`, JSON-RPC 2.0, one JSON object per message. Transport is a seam:
+the shipped runtime uses an **in-process transport** (no local network bridge, airplane-mode
+runtime unchanged). The same server objects can additionally be exposed through an **external
+endpoint** (off by default, switched on in the diagnostics panel or with
+`--ez debug_mcp_endpoint true` on the launch intent): newline-delimited JSON-RPC over Android
+abstract local sockets `voxedge-mcp-tools` and `voxedge-mcp-tts`. Nothing listens on a TCP port and
+no network permission is involved; a host reaches them through adb:
 
-2. **Durable conversation turn record** (`TurnRecord`). Aggregated AFTER each turn from the
-   stream: `conversation_id`, `turn_id`, `generation_id`, `role`, `content`, `spoken_content`
-   (may differ from `content` on barge-in), measured `timing_ms`, and `metadata`. This is a
-   replay / analytics / eval log — **it is NOT MCP itself.** Calling a plain turn log
-   "MCP-formatted" would be ceremony. The `tool_calls` array is a forward hook: a real MCP
-   tool/resource bridge (call ids, tool req/result, status) is added later **only at actual tool
-   boundaries**, not at the LLM↔TTS audio boundary.
+```
+adb forward tcp:7777 localabstract:voxedge-mcp-tools
+python tools/mcp/mcp_client.py --port 7777 tools/list
+python tools/mcp/mcp_client.py --port 7777 tools/call calculate expression="18+47"
+adb forward tcp:7778 localabstract:voxedge-mcp-tts
+python tools/mcp/mcp_client.py --port 7778 tools/call speak text="Hello there." language=en --save hello.wav
+```
 
-> **Decision (RESOLVED, and now implemented).** The original brief's "MCP-formatted LLM↔TTS
-> boundary" was reconciled as proposed: the **runtime boundary is the streaming event stream**, and
-> the **durable layer is the conversation turn record** with a `tool_calls` hook for real tools. Real
-> tools now exist — the on-device agentic layer has 13 tools + durable memory — but they sit at the
-> **LLM↔tool** boundary (executed between LLM steps and fed back as a tool-response continuation),
-> not at the audio boundary, exactly as designed. The Android runtime log (`runtime-log-v1`,
-> `RuntimeEventLogger`) is the concrete realization of the event channel; `tool.call`/`tool.result`
-> events were added for the agentic loop.
+Over the external endpoint a `speak` result carries the audio inline as an MCP `audio` content
+block (`audio/wav`, base64) and `structuredContent.audio_bytes` instead of the in-process
+`pcm_ref`, since the caller cannot redeem a handle. The confirmation gate applies to external tool
+calls exactly as to the model's.
+
+Methods both platforms must implement (server) and use (client):
+
+| Method | Direction | Purpose |
+| --- | --- | --- |
+| `initialize` | client → server | Handshake; server returns `protocolVersion`, `capabilities.tools`, `serverInfo` |
+| `notifications/initialized` | client → server | Handshake complete |
+| `ping` | client → server | Liveness |
+| `tools/list` | client → server | Tool descriptors: `name`, `description`, `inputSchema` (JSON Schema object) |
+| `tools/call` | client → server | `params.name`, `params.arguments` → `result.content[] {type:"text"}`, `result.isError`, optional `result.structuredContent` |
+
+Error handling follows MCP: an unknown tool or bad params is a JSON-RPC **error** (`-32602`, with
+`data.available` listing tool names); a tool that ran and failed is a **result** with
+`isError: true`. Malformed JSON gets `-32700`, a non-2.0 envelope `-32600`, an unknown method `-32601`.
+
+### Server `voxedge-device-tools`
+
+Serves the on-device tool registry (13 tools on Android: `get_datetime`, `set_timer`, `set_alarm`,
+`battery_status`, `flashlight`, `calculate`, `remember_fact`, `recall_facts`, `forget_fact`,
+`create_calendar_event`, `dial_number`, `send_sms`, `navigate`). Every parameter is a string in
+`inputSchema`; tools coerce. The side-effect **confirmation gate** and the dispatch observer live on
+the server side, so they apply identically to the prompt-convention `[TOOL_CALL]` loop and to
+engine-native function calling: both end in the same `tools/call`.
+
+### Server `voxedge-tts`
+
+One tool, `speak`: the LLM output, cut into a clause by the segmenter, formatted as MCP and handed
+to TTS.
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"speak","arguments":{
+  "text":"It is three in the afternoon.","language":"en","clause_index":0,"chunk_id":"c0",
+  "flow_steps":6,"generation_id":17}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"synthesized 144384 samples"}],
+  "isError":false,"structuredContent":{"pcm_ref":"pcm:c0:1234","sample_rate":44100,
+  "num_samples":144384,"synth_ms":227,"chunk_id":"c0","clause_index":0,"language":"en"}}}
+```
+
+`structuredContent.pcm_ref` is a handle the client redeems for the PCM buffer out of band. This
+keeps the clause-streaming latency path: one short request per clause, encode/decode in
+microseconds against a ~220 ms synthesis, no audio in JSON. A synthesis failure is
+`isError: true` and the clause is dropped (logged as `tts.chunk_dropped`).
+
+### Fixtures
+
+`fixtures/` holds one canonical message per method/direction. The Python conformance test
+(`tests/test_mcp_contract.py`) validates them and checks that the Android and iOS method constants
+match this profile.
+
+## Why the runtime stays streaming
+
+On-device measurement (`docs/demo/sm8750_measurements.md`) showed that first-audio latency
+requires streaming LLM output into TTS clause by clause: first-clause TTS is ~0.67 s only because
+a short clause is synthesized immediately. The MCP boundary therefore sits **per clause**
+(`speak`), never around a complete answer.
 
 ## Cancellation / barge-in (`generation_id`)
 
-Every `Event` carries a `generation_id` (cancel epoch). On barge-in/cancel, a `control.*` event
-supplies `cancel.new_generation_id`; all stages switch to it and **drop any event with a stale
-`generation_id`** so superseded `llm.text_delta` / `tts.audio_chunk` / playback can't leak into
-the new turn. Audible playback must stop mid-clause within `cancel.stop_playback_within_ms`
-(default 200 ms) — clause-boundary discard alone is too slow for the user.
+Every event carries a `generation_id` (cancel epoch), and so does every `speak` call. On
+barge-in/cancel a `control.*` event supplies `cancel.new_generation_id`; all stages drop events with
+a stale epoch, and the LLM side never issues a `tools/call` for a stale generation (checked before
+dispatch), so a cancelled turn cannot fire a side-effecting tool. Audible playback must stop
+mid-clause within `cancel.stop_playback_within_ms` (default 200 ms).
 
 ## Versioning
 
-- `schema_version` required on every `Event` and `TurnRecord`. Semver; both platforms pin the
-  major. Unknown event `type`s and unknown `metadata` keys are ignored, never rejected. A message
-  is EITHER an `event` OR a `turn_record` (`oneOf`), and per-type payloads are required (e.g.
-  `tts.audio_chunk` requires `audio`; `control.*` requires `cancel`; `asr.final` requires `asr_detail`).
+`schema_version` is required on every `Event` and `TurnRecord`. Semver; both platforms pin the
+major. Unknown event `type`s and unknown `metadata` keys are ignored, never rejected. MCP messages
+carry the protocol revision only in `initialize`.
 
-## Conformance (R5) — invariants, not identical text
+## Conformance
 
-Both platforms pass a shared suite built from fixtures under `tests/`. It must assert
-**invariants**, not identical model output:
-- Schema validation of every emitted event/record.
-- Canned event stream → identical state transitions + aggregated `TurnRecord` shape.
-- **Timed/latency** fixtures (waterfall assertions), **barge-in** (mid-clause stop < 200 ms),
-  **stale-event / cancel-epoch races**, **no-speech timeout**, **thermal degrade**, prompt
-  normalization, and clause-segmentation fixtures.
-Offline ASR is now selected and measured (R2 resolved: sherpa-onnx Korean zipformer int8 ~51 ms /
-SenseVoice for English), so the `docs/design/latency_budget.md` figures are measured, not provisional.
+Both platforms pass a shared suite built from fixtures under `tests/`, asserting invariants rather
+than identical model output: schema validation of emitted events, MCP fixture validity and method
+parity, canned event stream → identical state transitions, timed/latency fixtures, barge-in
+(mid-clause stop < 200 ms), stale-event races, no-speech timeout, thermal degrade, prompt
+normalization, clause segmentation.
 
 ## Related specs
 
 - Latency waterfall + targets: `docs/design/latency_budget.md`.
 - Conversation state machine + power policy: `docs/design/speech_loop_state_machine.md`.
 - Typed configuration: `shared/config/`.
+- MCP boundary design note: `docs/design/mcp_boundary.md`.

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://conversational-ai-agent/shared/mcp/conversation_events.schema.json",
   "title": "Conversation runtime streaming events + durable turn record",
-  "description": "Two layers: (1) runtime streaming events between pipeline stages for low-latency speech-to-speech, and (2) a durable per-turn conversation record aggregated after the turn. The runtime path MUST NOT be gated on a complete record (latency). A message is EITHER an event OR a turn_record, never both.",
+  "description": "Two layers: (1) runtime streaming events between pipeline stages for low-latency speech-to-speech, and (2) a durable per-turn conversation record aggregated after the turn. The runtime path MUST NOT be gated on a complete record (latency). A message is EITHER an event OR a turn_record, never both. The tool and LLM->TTS boundaries themselves are MCP (JSON-RPC 2.0) exchanges; see README.md and fixtures/ for the MCP profile. mcp.request / mcp.response events record that traffic (method, id, size; never arguments).",
   "type": "object",
   "oneOf": [
     { "required": ["event"], "not": { "required": ["turn_record"] } },
@@ -29,6 +29,7 @@
             "tts.chunk_request", "tts.audio_chunk", "tts.playback_start", "tts.playback_end",
             "control.barge_in", "control.cancel",
             "runtime.thermal", "runtime.degrade",
+            "mcp.request", "mcp.response",
             "error"
           ]
         },
@@ -137,7 +138,7 @@
     },
     "TurnRecord": {
       "type": "object",
-      "description": "Durable per-turn conversation record. NOT MCP itself — a replay/analytics/eval log aggregated AFTER the turn from the event stream. A real MCP tool/resource bridge is added later, only at actual tool boundaries (tool_calls below is the forward hook).",
+      "description": "Durable per-turn conversation record: a replay/analytics/eval log aggregated AFTER the turn from the event stream. The MCP exchanges of the turn (tools/call to the device-tool server and to the TTS server) are summarized in tool_calls.",
       "required": ["schema_version", "conversation_id", "turn_id", "generation_id", "role", "content"],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0.0" },
@@ -179,7 +180,7 @@
         },
         "tool_calls": {
           "type": "array",
-          "description": "Forward hook for a future real-MCP tool/resource bridge (empty today).",
+          "description": "MCP tools/call exchanges made during the turn (device tools; TTS speak calls are recorded as tts.* events instead).",
           "items": {
             "type": "object",
             "properties": {

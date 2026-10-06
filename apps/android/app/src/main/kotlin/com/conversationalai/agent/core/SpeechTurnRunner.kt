@@ -2,6 +2,8 @@ package com.conversationalai.agent.core
 
 import android.util.Log
 import com.conversationalai.agent.audio.PcmStreamPlayer
+import com.conversationalai.agent.core.mcp.McpMessageTap
+import com.conversationalai.agent.core.mcp.McpTts
 import com.conversationalai.agent.core.tools.ToolRegistry
 import com.conversationalai.agent.llm.LlmEngine
 import com.conversationalai.agent.tts.ClauseInputBuilder
@@ -21,6 +23,10 @@ import kotlinx.coroutines.withContext
  * (never spoken) and its result is appended to the warm KV session as a `<tool_response>`
  * continuation for the next step, until the model answers in plain text or [MAX_TOOL_STEPS] is
  * hit. Barge-in stays correct: a stale generation id stops the loop BEFORE any tool executes.
+ *
+ * Both external boundaries of a turn are MCP: tool calls go through the registry's MCP endpoint
+ * (`ToolRegistry.mcp`), and every clause is handed to TTS as a `tools/call` on [McpTts]. Raw MCP
+ * traffic (methods, ids, sizes — never arguments) is logged as `mcp.request` / `mcp.response`.
  */
 class SpeechTurnRunner(
     private val llm: LlmEngine,
@@ -37,6 +43,9 @@ class SpeechTurnRunner(
     // TTS flow-matching steps per clause (settings; quality/latency knob: K=4 fast, K=6 default).
     private val flowSteps: () -> Int = { 6 },
 ) {
+    /** The LLM-output -> TTS-input boundary (MCP server + in-process client around [tts]). */
+    private val ttsMcp = McpTts(tts, inputBuilder)
+
     suspend fun run(
         gid: Long,
         prompt: String,
@@ -60,8 +69,28 @@ class SpeechTurnRunner(
         var ttftMs = 0L
         var firstPcmMs = 0L
         var clauseIndex = 0
+        // Decode throughput: streamed chunks (one per token on LiteRT-LM; Genie may batch a few
+        // tokens per callback) and when the last one arrived, for llm.generate_end.
+        var tokenChunks = 0L
+        var tokenChars = 0L
+        var lastTokenMs = 0L
 
         onState(ConvState.GENERATING)
+        val mcpTap = McpMessageTap { direction, method, id, isError, bytes ->
+            eventLogger?.log(
+                event = if (method != null) "mcp.request" else "mcp.response",
+                generationId = gid,
+                elapsedMs = elapsedSince(t0),
+                attributes = linkedMapOf<String, Any?>(
+                    "direction" to direction, "method" to method, "id" to id,
+                    "error" to isError, "bytes" to bytes,
+                ),
+            )
+        }
+        if (eventLogger != null) {
+            ttsMcp.tap = mcpTap
+            if (useTools) tools?.mcp?.tap = mcpTap
+        }
         eventLogger?.log(
             event = "llm.generate_start",
             generationId = gid,
@@ -78,16 +107,15 @@ class SpeechTurnRunner(
             try {
                 for (chunk in clauses) {
                     if (!generationEpoch.isCurrent(gid)) break
-                    val synthStart = System.nanoTime()
-                    // A null return is a native synthesis failure (transient SNPE exec errors
-                    // happen under HTP contention with the LLM) — retry once, then log the drop.
-                    val pcm = runCatching {
-                        val inputs = inputBuilder.build(chunk.text, lang = chunk.language)
-                        tts.synthesizeClause(inputs, k = flowSteps())
-                            ?: tts.synthesizeClause(inputs, k = flowSteps())
-                            ?: throw IllegalStateException("native synthesis returned null (after retry)")
-                    }.getOrElse { e ->
-                        Log.w(TAG, "clause dropped (${e.message}): \"${chunk.text}\"")
+                    // MCP `tools/call speak` on the TTS server (retry-once for transient native
+                    // failures lives server-side). A null return means the clause is dropped.
+                    val speak = ttsMcp.speak(
+                        text = chunk.text, language = chunk.language, clauseIndex = chunk.index,
+                        chunkId = chunk.id, flowSteps = flowSteps(), generationId = gid,
+                    )
+                    if (speak == null) {
+                        val error = ttsMcp.lastError ?: "speak failed"
+                        Log.w(TAG, "clause dropped ($error): \"${chunk.text}\"")
                         eventLogger?.log(
                             event = "tts.chunk_dropped",
                             generationId = gid,
@@ -95,12 +123,13 @@ class SpeechTurnRunner(
                             attributes = mapOf(
                                 "chunk_id" to chunk.id,
                                 "clause_index" to chunk.index,
-                                "error" to (e.message ?: e::class.java.simpleName),
+                                "error" to error,
                             ),
                         )
-                        null
-                    } ?: continue
-                    val synthMs = (System.nanoTime() - synthStart) / 1_000_000
+                        continue
+                    }
+                    val pcm = speak.pcm
+                    val synthMs = speak.synthMs
                     if (!generationEpoch.isCurrent(gid)) break
                     if (firstPcmMs == 0L) {
                         firstPcmMs = elapsedSince(t0)
@@ -242,6 +271,9 @@ class SpeechTurnRunner(
                             attributes = mapOf("token_chars" to tok.length),
                         )
                     }
+                    tokenChunks += 1
+                    tokenChars += tok.length
+                    lastTokenMs = elapsedSince(t0)
                     if (filter != null) filter.accept(tok) else emitText(tok)
                 }
                 // The first step of a re-prefill turn may rewind: KV prefix-match against the
@@ -294,6 +326,19 @@ class SpeechTurnRunner(
                 val toolResult = tools!!.dispatch(call)
                 stepPrompt = template.toolResponse(toolResult.content)
             }
+            val decodeMs = (lastTokenMs - ttftMs).coerceAtLeast(0L)
+            eventLogger?.log(
+                event = "llm.generate_end",
+                generationId = gid,
+                elapsedMs = elapsedSince(t0),
+                attributes = mapOf(
+                    "steps" to step, "chunks" to tokenChunks, "chars" to tokenChars,
+                    "ttft_ms" to ttftMs, "decode_ms" to decodeMs,
+                    // chunks after the first one, over the time they took to arrive
+                    "chunks_per_s" to if (decodeMs > 0 && tokenChunks > 1) (tokenChunks - 1) * 1000.0 / decodeMs else 0.0,
+                    "llm_result" to result.name,
+                ),
+            )
             seg.finish()
             clauses.close()
             result
@@ -302,6 +347,10 @@ class SpeechTurnRunner(
             if (tools != null && useTools) tools.onDispatch = null
         }
         consumer.join()
+        // The TTS consumer keeps issuing `speak` calls after the LLM finished; detach the MCP taps
+        // only once it has drained, or the tail of the turn's traffic goes unlogged.
+        if (tools != null && useTools) tools.mcp.tap = null
+        ttsMcp.tap = null
         onPlayerStopped(player)
 
         val totalMs = elapsedSince(t0)

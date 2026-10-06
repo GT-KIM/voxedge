@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"synthesized 144384 samples"}],"isError":false,"structuredContent":{"pcm_ref":"pcm:c0:1234","sample_rate":44100,"num_samples":144384,"synth_ms":227,"chunk_id":"c0","clause_index":0,"language":"en"}}}

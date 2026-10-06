@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":6,"error":{"code":-32602,"message":"unknown tool 'open_door'","data":{"available":["battery_status","calculate","get_datetime","set_alarm","set_timer"]}}}

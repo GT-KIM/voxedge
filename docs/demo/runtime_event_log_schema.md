@@ -72,6 +72,9 @@ LLM:
 
 - `llm.generate_start`
 - `llm.first_token`
+- `llm.generate_end` (2026-10-06) — decode statistics for the turn: `steps`, `chunks` (streamed
+  callbacks; one per token on LiteRT-LM, possibly several tokens per callback on Genie), `chars`,
+  `ttft_ms`, `decode_ms` (first to last chunk), `chunks_per_s`, `llm_result`.
 
 Tool use (agentic loop, 2026-06-10, additive):
 
@@ -83,6 +86,18 @@ Tool use (agentic loop, 2026-06-10, additive):
 (LiteRT-LM / Gemma), `false` for the prompt-convention `[TOOL_CALL]` loop (Genie). Both paths now
 funnel through one `ToolRegistry` observer, so native tool calls — previously only in logcat — also
 appear here and on the turn record's `toolsUsed`.
+
+MCP boundary (2026-10-06, additive): every device-tool call and every clause handed to TTS is a
+JSON-RPC 2.0 `tools/call` on an in-process MCP server (`shared/mcp/README.md`). The log records
+the traffic, not its contents:
+
+- `mcp.request` — a request or notification left or reached an endpoint (`direction`: `out` from
+  the client / `in` at the server, `method`, `id`, `bytes`).
+- `mcp.response` — the matching response (`direction`, `id`, `error`, `bytes`).
+
+A clause therefore produces `tts.chunk_request` -> `mcp.request(tools/call)` x2 (client out, server
+in) -> `mcp.response` x2 -> `tts.audio_chunk`; a tool call produces `mcp.request`/`mcp.response`
+around `tool.call`/`tool.result`. Arguments and text never appear in these events.
 
 TTS/playback:
 
@@ -100,6 +115,10 @@ Turn/control:
   (`cue`: `NOT_UNDERSTOOD` | `GENERATION_FAILED` | `PLAYBACK_FAILED`, plus `lang` for spoken cues).
 - `control.barge_in`
 - `control.llm_model_selected` — persisted LLM choice changed (`model_id`); applied next launch.
+- `control.mcp_endpoint` (2026-10-06) — external MCP endpoint switched (`enabled`).
+- `control.asr_engine_selected` (2026-10-06) — the diagnostics ASR switch moved (`engine` name;
+  `platform_usable` when the platform recognizer was checked). `asr.final` already carries
+  `asr_engine`, so every transcript names the engine that produced it.
 
 ## Privacy Notes
 

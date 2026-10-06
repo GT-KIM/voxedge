@@ -48,7 +48,10 @@ class AndroidControllerContractTest(unittest.TestCase):
         # responses); re-prefill turns may rewind on the first step (KV prefix match).
         self.assertIn("llm.generate(stepPrompt, onLlmToken)", runner)
         self.assertIn("llm.generateRewind(stepPrompt, onLlmToken)", runner)
-        self.assertIn("tts.synthesizeClause", runner)
+        # Clauses reach TTS through the MCP `speak` tool (core/mcp/McpTts), never by calling the
+        # engine directly from the runner.
+        self.assertIn("ttsMcp.speak(", runner)
+        self.assertNotIn("tts.synthesizeClause(", runner)
         self.assertIn("player.write(pcm)", runner)
         self.assertIn("private data class ClauseChunk", runner)
 

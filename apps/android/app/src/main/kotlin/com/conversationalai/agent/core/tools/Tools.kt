@@ -1,5 +1,7 @@
 package com.conversationalai.agent.core.tools
 
+import com.conversationalai.agent.core.mcp.McpToolBridge
+
 /**
  * On-device tool-use contract (the agentic foundation): the LLM requests a tool with a
  * `<tool_call>{json}</tool_call>` block (intercepted by core/ToolCallFilter so it is never
@@ -71,6 +73,11 @@ class ToolRegistry(private val tools: List<Tool>) {
     val specs: List<ToolSpec> get() = tools.map { it.spec }
     val isEmpty: Boolean get() = tools.isEmpty()
 
+    /** MCP endpoint for this registry (server + in-process client), created on first dispatch.
+     *  Every tool invocation is a `tools/call` round trip through it (MCP is the mandated tool
+     *  boundary); [serve] is the server-side handler it lands on. */
+    val mcp: McpToolBridge by lazy { McpToolBridge(this) }
+
     /** Mark the start of a user turn (monotonic id). Expires stale pending confirmations. */
     fun beginTurn(turnId: Long) {
         synchronized(lock) {
@@ -79,7 +86,12 @@ class ToolRegistry(private val tools: List<Tool>) {
         }
     }
 
-    fun dispatch(call: ToolCall): ToolResult {
+    /** LLM-side dispatch: encodes the call as MCP and runs it on the server side. */
+    fun dispatch(call: ToolCall): ToolResult = mcp.call(call)
+
+    /** Server-side execution (confirmation gate + run + observer). Only MCP `tools/call` reaches
+     *  this; app code dispatches through [dispatch]. */
+    internal fun serve(call: ToolCall): ToolResult {
         val result = execute(call)
         runCatching { onDispatch?.invoke(call, result) }   // observation must never break a turn
         return result

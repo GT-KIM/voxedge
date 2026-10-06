@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":3,"result":{"tools":[{"name":"set_timer","description":"Start a countdown timer in the clock app.","inputSchema":{"type":"object","properties":{"minutes":{"type":"string","description":"duration in minutes"},"label":{"type":"string","description":"optional label"}},"required":["minutes"]}}]}}

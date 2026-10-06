@@ -16,5 +16,7 @@ enum McpEventType: String, CaseIterable, Equatable {
     case controlCancel = "control.cancel"
     case runtimeThermal = "runtime.thermal"
     case runtimeDegrade = "runtime.degrade"
+    case mcpRequest = "mcp.request"
+    case mcpResponse = "mcp.response"
     case error = "error"
 }

@@ -16,5 +16,7 @@ enum class McpEventType(val wireName: String) {
     CONTROL_CANCEL("control.cancel"),
     RUNTIME_THERMAL("runtime.thermal"),
     RUNTIME_DEGRADE("runtime.degrade"),
+    MCP_REQUEST("mcp.request"),
+    MCP_RESPONSE("mcp.response"),
     ERROR("error"),
 }
