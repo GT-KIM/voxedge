@@ -109,9 +109,10 @@ class SpeechTurnRunner(
                     if (!generationEpoch.isCurrent(gid)) break
                     // MCP `tools/call speak` on the TTS server (retry-once for transient native
                     // failures lives server-side). A null return means the clause is dropped.
+                    val k = flowSteps()   // may be capped by the thermal policy
                     val speak = ttsMcp.speak(
                         text = chunk.text, language = chunk.language, clauseIndex = chunk.index,
-                        chunkId = chunk.id, flowSteps = flowSteps(), generationId = gid,
+                        chunkId = chunk.id, flowSteps = k, generationId = gid,
                     )
                     if (speak == null) {
                         val error = ttsMcp.lastError ?: "speak failed"
@@ -142,6 +143,7 @@ class SpeechTurnRunner(
                                 "clause_index" to chunk.index,
                                 "synth_ms" to synthMs,
                                 "num_samples" to pcm.size,
+                                "flow_steps" to k,
                             ),
                         )
                     }
@@ -154,6 +156,7 @@ class SpeechTurnRunner(
                             "clause_index" to chunk.index,
                             "synth_ms" to synthMs,
                             "num_samples" to pcm.size,
+                            "flow_steps" to k,
                         ),
                     )
                     if (!playbackStarted) {

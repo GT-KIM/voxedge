@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import com.conversationalai.agent.asr.OfflineAsr
 import com.conversationalai.agent.asr.PlatformAsr
 import com.conversationalai.agent.asr.SwitchableAsr
+import com.conversationalai.agent.core.ThermalMonitor
 import com.conversationalai.agent.core.mcp.McpExternalEndpoint
 import com.conversationalai.agent.core.mcp.McpTts
 import com.conversationalai.agent.audio.AudioCapture
@@ -56,6 +57,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var llmModel: LlmModelSpec
     private lateinit var settingsController: SettingsController
     private var initialBargeIn = false
+    private var thermalLevel by mutableStateOf("nominal")
+    private var thermalMonitor: ThermalMonitor? = null
     private lateinit var asr: OfflineAsr
     // Platform recognizer behind the same AsrEngine boundary, selectable from diagnostics for
     // comparison runs; the controller always talks to the switch (owned engine by default).
@@ -211,7 +214,11 @@ class MainActivity : ComponentActivity() {
             // so saved facts are injected into the system prompt (grounding without a recall call).
             tools = deviceTools.registry,
             memory = deviceTools.memory,
+            onThermal = { level, _ -> thermalLevel = level.wire },
         )
+        // OS thermal status -> degrade policy (flow steps / response cap / pause at critical).
+        thermalMonitor = ThermalMonitor(this) { status, headroom -> controller.onThermalStatus(status, headroom) }
+            .also { it.start() }
 
         // Persisted configuration (model choice, sampling, toggles) — applied to the live
         // controller/engine now; the model choice itself was already honored by RuntimeInitializer.
@@ -393,6 +400,7 @@ class MainActivity : ComponentActivity() {
             micGranted = micGranted,
             initialAsrLanguage = asr.language,
             initialBargeIn = initialBargeIn,
+            thermalLevel = thermalLevel,
             settingsController = settingsController,
             onRequestMicPermission = { micPerm.launch(Manifest.permission.RECORD_AUDIO) },
             onNewSession = ::handleNewSession,
@@ -701,6 +709,7 @@ class MainActivity : ComponentActivity() {
         if (::asr.isInitialized) asr.release()
         if (::platformAsr.isInitialized) platformAsr.release()
         mcpEndpoints.forEach { it.stop() }
+        thermalMonitor?.stop()
         if (::enhancer.isInitialized) enhancer.release()
         if (::controller.isInitialized) controller.stop()
         super.onDestroy()

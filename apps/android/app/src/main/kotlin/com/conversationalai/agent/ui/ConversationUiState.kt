@@ -117,6 +117,8 @@ data class ConversationUiState(
     val platformAsr: Boolean = false,
     /** Diagnostics: external MCP endpoint (local sockets) is listening. */
     val mcpEndpoint: Boolean = false,
+    /** Thermal degrade level ("nominal" | "elevated" | "critical"), shown in the header when not nominal. */
+    val thermalLevel: String = "nominal",
     val diagnosticsOpen: Boolean = false,
     val settingsOpen: Boolean = false,
     val settings: SettingsUiState = SettingsUiState(),

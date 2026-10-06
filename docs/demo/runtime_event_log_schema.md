@@ -99,12 +99,22 @@ A clause therefore produces `tts.chunk_request` -> `mcp.request(tools/call)` x2 
 in) -> `mcp.response` x2 -> `tts.audio_chunk`; a tool call produces `mcp.request`/`mcp.response`
 around `tool.call`/`tool.result`. Arguments and text never appear in these events.
 
+Thermal degrade (2026-10-07; policy in `core/ThermalPolicy`, fed by `PowerManager` thermal status):
+
+- `runtime.thermal` — every OS status callback: `level` (`nominal` | `elevated` | `critical`),
+  `os_thermal_state` (`NONE`..`SHUTDOWN`), `headroom` (10 s forecast, 1.0 = severe throttling).
+- `runtime.degrade` — the level changed: `reason: thermal`, `level`, `actions`
+  (`reduce_flow_steps`, `shorten_response`, `pause_new_turns`, comma-joined), and the caps now in
+  force: `flow_steps`, `max_response_tokens`. Emitted on restore too (`level: nominal`, empty actions).
+- `turn.paused` — a turn was refused at `critical`: `reason: thermal`, `level`, `source`
+  (`hands_free` | `typed`).
+
 TTS/playback:
 
 - `tts.chunk_request`
 - `tts.chunk_dropped`
-- `tts.first_pcm`
-- `tts.audio_chunk`
+- `tts.first_pcm` — includes `flow_steps` (the K actually used; capped under thermal degrade).
+- `tts.audio_chunk` — includes `flow_steps`.
 - `playback.start`
 - `playback.end`
 

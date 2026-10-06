@@ -69,6 +69,7 @@ struct ConversationUiState: Equatable {
     var bargeIn: Bool
     var platformAsr: Bool
     var mcpEndpoint: Bool
+    var thermalLevel: String
     var diagnosticsOpen: Bool
     var loopState: SpeechLoopUiState
     var transcript: [TranscriptItem]
@@ -92,6 +93,7 @@ struct ConversationUiState: Equatable {
             bargeIn: false,
             platformAsr: false,
             mcpEndpoint: false,
+            thermalLevel: "nominal",
             diagnosticsOpen: false,
             loopState: .idle,
             transcript: [

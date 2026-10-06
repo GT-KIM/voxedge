@@ -278,8 +278,13 @@ fun SessionHeader(
             Text(s.sessionHeader, style = MaterialTheme.typography.titleLarge)
             val ctx = state.contextOccupancyPercent?.let { "${s.ctxPrefix} $it%" } ?: ""
             val model = state.activeModelName.ifEmpty { s.modelUnknown }
+            val thermal = when (state.thermalLevel) {
+                "elevated" -> s.thermalElevated
+                "critical" -> s.thermalCritical
+                else -> ""
+            }
             Text(
-                "${s.loopWord(state.loopState)} - $model$ctx",
+                "${s.loopWord(state.loopState)} - $model$ctx$thermal",
                 style = MaterialTheme.typography.labelMedium,
             )
         }

@@ -112,6 +112,34 @@ is fine for short cool-device turns but unsafe as a permanent default for an alw
 
 - Subscribe to `runtime.thermal`. On `elevated`: drop GENERATING from burst to balanced and
   reduce TTS flow steps K / response length. On `critical`: pause new turns, surface a UX notice.
+
+**Implemented on Android (2026-10-07, device-verified with `cmd thermalservice override-status`):**
+`core/ThermalPolicy` maps the OS thermal status (the primary signal per `runtime.use_os_thermal_state`)
+to a level — NONE/LIGHT → `nominal`, MODERATE → `elevated`, SEVERE+ → `critical` — with one-step
+hysteresis on cool-down (ELEVATED clears at NONE, CRITICAL steps to ELEVATED at ≤ LIGHT; a jump to
+NONE clears fully). Actions: `elevated` caps TTS K at 5 (the measured HTP contention floor) and
+halves the response-token cap (floor 40); `critical` additionally pauses new turns (hands-free,
+speculative, typed) while the loop keeps listening, and the session header shows a localized
+notice. `ThermalMonitor` feeds `PowerManager.addThermalStatusListener` + the 10 s headroom into
+`ConversationController.onThermalStatus`; events `runtime.thermal` / `runtime.degrade` /
+`turn.paused`. The thresholds come from the 2026-10-06 sustained runs (status 1 without slowdown,
+status 2 with −18 % decode on the HTP path). `lower_power_profile` is not emitted: the HTP power
+profile is fixed at graph-prepare time on this stack. The iOS mirror (`ThermalPolicy.swift`) maps
+`ProcessInfo.thermalState` fair/serious/critical onto the same levels.
+
+**Implemented on Android (2026-10-07, device-verified with `cmd thermalservice override-status`):**
+`core/ThermalPolicy` maps the OS thermal status (the primary signal per `runtime.use_os_thermal_state`)
+to a level — NONE/LIGHT → `nominal`, MODERATE → `elevated`, SEVERE+ → `critical` — with one-step
+hysteresis on cool-down (ELEVATED clears at NONE, CRITICAL steps to ELEVATED at ≤ LIGHT; a jump to
+NONE clears fully). Actions: `elevated` caps TTS K at 5 (the measured HTP contention floor) and
+halves the response-token cap (floor 40); `critical` additionally pauses new turns (hands-free,
+speculative, typed) while the loop keeps listening, and the session header shows a localized
+notice. `ThermalMonitor` feeds `PowerManager.addThermalStatusListener` + the 10 s headroom into
+`ConversationController.onThermalStatus`; events `runtime.thermal` / `runtime.degrade` /
+`turn.paused`. The thresholds come from the 2026-10-06 sustained runs (status 1 without slowdown,
+status 2 with −18 % decode on the HTP path). `lower_power_profile` is not emitted: the HTP power
+profile is fixed at graph-prepare time on this stack. The iOS mirror (`ThermalPolicy.swift`) maps
+`ProcessInfo.thermalState` fair/serious/critical onto the same levels.
 - **Never reload models per turn** (init spike + multi-second/30-s cost). Load once in STARTING,
   keep LLM dialog and TTS graphs resident for the session.
 

@@ -69,7 +69,67 @@ class ConversationController(
     // failed, or every TTS clause dropped). An audible cue is always played; the UI may also
     // surface a localized notice from this callback.
     private val onNotice: (AudibleFeedback.Cue) -> Unit = {},
+    // Fired when the thermal degrade level changes (level + the schema action names in force).
+    private val onThermal: (ThermalPolicy.Level, List<String>) -> Unit = { _, _ -> },
 ) {
+    /** OS-thermal-status driven degrade policy: caps TTS flow steps and the response-token cap,
+     *  and pauses new turns at CRITICAL. Fed by [onThermalStatus] (ThermalMonitor on Android). */
+    val thermal = ThermalPolicy()
+
+    /** User's response-token cap (settings); the LLM receives [ThermalPolicy.maxResponseTokens] of it. */
+    @Volatile var maxResponseTokens: Int = LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS
+        private set
+
+    fun setMaxResponseTokens(maxTokens: Int) {
+        maxResponseTokens = maxTokens
+        applyResponseCap()
+    }
+
+    private fun applyResponseCap() {
+        val effective = thermal.maxResponseTokens(maxResponseTokens)
+        if (!llm.setMaxResponseTokens(effective)) Log.w(TAG, "response cap $effective not applied by ${llm.name()}")
+    }
+
+    /** New OS thermal status (Android PowerManager THERMAL_STATUS_*; [headroom] = 10 s forecast,
+     *  1.0 = severe throttling expected). Logs `runtime.thermal`; on a level change applies the
+     *  degrade actions and logs `runtime.degrade`. */
+    fun onThermalStatus(status: Int, headroom: Float? = null) {
+        val changed = thermal.update(status)
+        eventLogger?.log(
+            "runtime.thermal",
+            attributes = mapOf(
+                "level" to thermal.level.wire,
+                "os_thermal_state" to ThermalPolicy.statusName(status),
+                "headroom" to headroom,
+            ),
+        )
+        if (changed == null) return
+        applyResponseCap()
+        eventLogger?.log(
+            "runtime.degrade",
+            attributes = mapOf(
+                "reason" to "thermal",
+                "level" to changed.wire,
+                "actions" to thermal.actions.joinToString(","),
+                "flow_steps" to thermal.flowSteps(ttsFlowSteps),
+                "max_response_tokens" to thermal.maxResponseTokens(maxResponseTokens),
+            ),
+        )
+        Log.i(TAG, "thermal level=${changed.wire} actions=${thermal.actions}")
+        onThermal(changed, thermal.actions)
+    }
+
+    /** Refuse a new turn while CRITICAL; the loop keeps listening. */
+    private fun pausedForThermal(source: String): Boolean {
+        if (!thermal.pauseNewTurns) return false
+        eventLogger?.log(
+            "turn.paused",
+            attributes = mapOf("reason" to "thermal", "level" to thermal.level.wire, "source" to source),
+        )
+        Log.i(TAG, "turn paused (thermal ${thermal.level.wire}, $source)")
+        return true
+    }
+
     /** Barge-in is EXPERIMENTAL and OFF by default: AEC residual on this device still causes the
      *  assistant to interrupt itself. When off, the mic stays on but turn-time speech is ignored
      *  (5b behavior: the user waits for the assistant to finish). Toggle from the UI to experiment. */
@@ -176,7 +236,7 @@ class ConversationController(
         onSpeakingStarted = { speakingSinceNs = System.nanoTime() },
         eventLogger = eventLogger,
         tools = tools,
-        flowSteps = { ttsFlowSteps },
+        flowSteps = { thermal.flowSteps(ttsFlowSteps) },
     )
 
     // Voices the silent-failure cues (A2). Audio I/O lives here, not in the controller body.
@@ -184,7 +244,7 @@ class ConversationController(
         tts = tts,
         inputBuilder = inputBuilder,
         playerFactory = playerFactory,
-        flowSteps = { ttsFlowSteps },
+        flowSteps = { thermal.flowSteps(ttsFlowSteps) },
         onPlayerStarted = { activePlayer = it },
         onPlayerStopped = { player -> if (activePlayer === player) activePlayer = null },
     )
@@ -272,6 +332,11 @@ class ConversationController(
 
     internal suspend fun handleUtterance(samples: FloatArray) {
         if (!running) return
+        if (pausedForThermal("hands_free")) {
+            cancelSpeculation("thermal_pause")
+            if (running) setState(ConvState.LISTENING)
+            return
+        }
         onUtteranceCaptured(samples)   // debug dump of the real captured signal (pre-denoise)
         // A speculative turn may already be running for this utterance: confirm or discard it.
         val spec = speculation
@@ -363,7 +428,7 @@ class ConversationController(
 
     /** Mic early-checkpoint callback (capture thread): kick off a speculative turn. */
     internal fun candidateUtterance(samples: FloatArray) {
-        if (!running || !speculativeEnabled) return
+        if (!running || !speculativeEnabled || thermal.pauseNewTurns) return
         if (state != ConvState.LISTENING || speculation != null) return
         scope.launch(Dispatchers.Default) { startSpeculation(samples) }
     }
@@ -415,6 +480,12 @@ class ConversationController(
     // --- one-shot turn (typed / push-to-talk) ---
 
     suspend fun runTurn(userText: String, asrMs: Long = 0L, onDelta: (String) -> Unit): TurnRecord {
+        if (pausedForThermal("typed")) {
+            return TurnRecord(
+                generationId = generationEpoch.next(), userText = userText, replyText = "",
+                asrMs = asrMs, ttftMs = 0L, firstPcmMs = 0L, totalMs = 0L,
+            )
+        }
         val rec = generateAndSpeak(generationEpoch.next(), userText, asrMs, onDelta = onDelta)
         if (!running) setState(ConvState.IDLE)
         return rec

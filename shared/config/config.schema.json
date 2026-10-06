@@ -96,7 +96,11 @@
         "use_os_thermal_state": { "type": "boolean", "default": true, "description": "Prefer OS thermal status (Android PowerManager.getCurrentThermalStatus / iOS ProcessInfo.thermalState) as the primary degrade signal; raw zone temps are a secondary hint." },
         "thermal_elevated_c": { "type": "number", "default": 80, "description": "Secondary raw-zone hint; apply hysteresis." },
         "thermal_critical_c": { "type": "number", "default": 95 },
-        "thermal_hysteresis_c": { "type": "number", "default": 6, "description": "Must cool this far below a threshold before clearing the degrade level (prevents flapping; init spike measured ~103 °C, steady ~70 °C)." }
+        "thermal_hysteresis_c": { "type": "number", "default": 6, "description": "Must cool this far below a threshold before clearing the degrade level (prevents flapping; init spike measured ~103 °C, steady ~70 °C)." },
+        "degrade_elevated_os_status": { "type": "integer", "default": 2, "description": "OS thermal status (Android PowerManager THERMAL_STATUS_*; iOS ProcessInfo.thermalState mapped 0/1/2/4) at which the 'elevated' level starts. LIGHT (1) is ignored: measured without decode slowdown." },
+        "degrade_critical_os_status": { "type": "integer", "default": 3, "description": "OS thermal status at which 'critical' starts (new turns paused)." },
+        "degrade_flow_steps": { "type": "integer", "default": 5, "description": "TTS flow-step cap while degraded (K=4 made SNPE executes fail next to the LLM on the HTP)." },
+        "degrade_min_response_tokens": { "type": "integer", "default": 40, "description": "Floor for the halved response-token cap at 'elevated'; the cap at 'critical'." }
       }
     },
     "mcp_schema_version": { "type": "string", "const": "1.0.0", "description": "Pins the conversation contract version (shared/mcp)." }

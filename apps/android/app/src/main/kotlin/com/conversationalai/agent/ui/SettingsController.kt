@@ -29,6 +29,7 @@ class SettingsController(
         controller.setConfirmActions(settings.confirmActions)
         controller.speculativeEnabled = settings.speculativeTurns
         controller.ttsFlowSteps = settings.ttsFlowSteps ?: 6
+        controller.setMaxResponseTokens(settings.maxResponseTokens ?: LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS)
         settings.ttsSpeed?.let { inputBuilder?.setSpeed(it) }
         settings.ttsVoice?.let { inputBuilder?.setVoice(it) }
     }
@@ -81,7 +82,7 @@ class SettingsController(
     /** Persist + apply the per-turn generation cap to the live engine. */
     fun setMaxResponseTokens(maxTokens: Int): SettingsUiState {
         update(settings.copy(maxResponseTokens = maxTokens))
-        llm.setMaxResponseTokens(maxTokens)
+        controller.setMaxResponseTokens(maxTokens)   // applies the thermal cap on top
         return uiState()
     }
 

@@ -35,6 +35,8 @@ data class UiStrings(
     val interruptedSpokenPrefix: String,   // followed by the spoken text in quotes
     val modelUnknown: String,
     val ctxPrefix: String,                 // " - ctx" then "NN%"
+    val thermalElevated: String,           // header suffix while TTS/response are degraded for heat
+    val thermalCritical: String,           // header suffix while new turns are paused for heat
     private val loopWords: Map<SpeechLoopUiState, String>,
     private val statusWords: Map<RuntimeReadinessStatus, String>,
     private val readinessLabels: Map<RuntimeReadinessKind, String>,
@@ -88,6 +90,8 @@ data class UiStrings(
             interruptedSpokenPrefix = "interrupted - spoken: ",
             modelUnknown = "model unknown",
             ctxPrefix = " - ctx",
+            thermalElevated = " - device warm: shorter answers",
+            thermalCritical = " - device hot: paused to cool down",
             loopWords = mapOf(
                 SpeechLoopUiState.IDLE to "idle",
                 SpeechLoopUiState.LISTENING to "listening",
@@ -137,6 +141,8 @@ data class UiStrings(
             interruptedSpokenPrefix = "중단됨 - 말한 내용: ",
             modelUnknown = "모델 미상",
             ctxPrefix = " - 컨텍스트",
+            thermalElevated = " - 기기 발열: 답변 축소",
+            thermalCritical = " - 기기 과열: 냉각 대기",
             loopWords = mapOf(
                 SpeechLoopUiState.IDLE to "대기 중",
                 SpeechLoopUiState.LISTENING to "듣는 중",
