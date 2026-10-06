@@ -74,7 +74,7 @@ only). `PromptAssembler.systemPrompt(..., nativeTools=)` routes them.
 | **Qwen3-4B (Genie, prompt-convention)** | 45% → 45% (unchanged; ±1 case is sampling noise) | **still 0/5** | 0/5 |
 
 What the measurement settled:
-- The policy split is a **real win on the default backend** (Gemma) with **no new false positives** —
+- The policy split is a **real win on the backend the demo device runs** (Gemma; the code default is Qwen3 Genie) with **no new false positives** —
   the stricter directives didn't make chat prompts spuriously call tools.
 - Gemma still skips `calculate` (it trusts its own math) and `remember_fact`; native FC weights its
   tool declarations over the system instruction for those.
