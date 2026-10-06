@@ -79,6 +79,29 @@ Readings:
 
 Repro: `python tools/llm/sustained_run.py --label qwen3-4b-genie --minutes 10` (Qwen3 selected).
 
+### Airplane-mode re-runs (2026-10-06 evening, same harness, USB still attached for adb)
+
+| | Gemma 4 E2B (GPU) | Qwen3-4B Genie (HTP) |
+|---|---|---|
+| Turns / duration | 43 / 10 min 01 s, 0 failures | 14 / 3 min 52 s, 0 failures — **stopped by the guard at thermal status 2 (MODERATE)** |
+| TTFT warm | 115 ms | 106 ms |
+| First PCM warm | 494 ms | EN 761 ms, KO 1117 ms |
+| Decode | 31.9 chunks/s, flat (32.1 → 31.8) | 11.2 → 9.1 chunks/s (**−18 %** once status 2 was reached) |
+| SKIN | 33.5 → 38.0 °C, status 0 throughout | 33.5 → 41.6 °C in under 4 min; status 1 at ~2 min, status 2 at ~3.9 min |
+| AP | max 42.5 °C | max 49.0 °C |
+
+Readings:
+- Airplane mode changed nothing material for the GPU path: the numbers match the morning run within
+  noise. The GPU path is the one that survives 10 minutes of continuous turns without throttling.
+- The HTP path's thermal margin depends on the starting state. In the morning (cool device) it took
+  ~9 min to reach status 1; in the evening, after a day of runs and a 3-min cool-down that had only
+  brought SKIN back to 33 °C (AP still 41.7 °C), it reached status 2 in under 4 minutes and decode
+  slowed measurably. A first attempt straight after the Gemma run (SKIN 36 °C at start) hit the
+  42 °C guard after 2 minutes. Continuous HTP use therefore needs the thermal/degrade policy that the
+  event schema already defines (`runtime.thermal` / `runtime.degrade`) and the app does not yet
+  implement.
+- Charging was present in all runs (adb needs USB), so battery heat is in every figure.
+
 ## ASR — owned, offline (sherpa-onnx, per-language)
 
 | Model | Role | Decode | Notes |
