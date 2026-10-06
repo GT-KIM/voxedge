@@ -99,6 +99,9 @@ destructive/outward actions; multi-call steps.
 
 ## 4. Follow-up track (2026-06-11): measurement + latency/quality levers
 
+- **Sustained-run harness** (`tools/llm/sustained_run.py`, 2026-10-06): loops the chat prompts for N
+  minutes while sampling `dumpsys` memory and thermal state; joins `llm.generate_end` decode stats.
+  Gemma 4 E2B results are in `docs/demo/sm8750_measurements.md`.
 - **Eval harness** (`tools/llm/eval_turns.py` + `eval_prompts.json`): drives the standing KO/EN +
   tool-task battery through the `debug_typed_turn` adb hook, joins logcat replies with the JSONL
   event log, and emits a markdown report (TTFT/first-PCM/total per turn, session_mode, tool
