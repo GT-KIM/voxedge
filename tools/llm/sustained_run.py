@@ -11,6 +11,11 @@ log (`llm.generate_end`, `turn.end`), `dumpsys meminfo`, `dumpsys thermalservice
 Switch the backend first (settings sheet, or `llm_model_id` in shared_prefs/voxedge_settings.xml)
 and provision the model. Airplane mode is the caller's responsibility; the report records what
 `dumpsys connectivity` says about it.
+
+The report also shows what the app's thermal/degrade policy did during the run (`runtime.thermal`
+status changes, `runtime.degrade` level changes with the flow steps and response cap in force,
+`turn.paused`) and the TTS flow steps each turn actually used. To watch the policy work instead of
+stopping ahead of it, raise the guards: `--stop-status 3 --stop-skin-c 44`.
 """
 
 import argparse
@@ -92,6 +97,10 @@ def main() -> int:
     ap.add_argument("--stop-status", type=int, default=2,
                     help="stop the loop when thermal status reaches this level (2 = MODERATE)")
     args = ap.parse_args()
+    # Replies contain non-ASCII (Korean, dashes); a redirected stdout on Windows defaults to cp949.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
     if "device" not in adb("devices"):
         print("no adb device connected", file=sys.stderr)
@@ -161,11 +170,32 @@ def main() -> int:
         evs = by_gid.get(t["gid"], [])
         end = next((e for e in evs if e["event"] == "turn.end"), {})
         gen = next((e for e in evs if e["event"] == "llm.generate_end"), {})
+        audio = next((e for e in evs if e["event"] == "tts.audio_chunk"), {})
         t.update(
             ttft=end.get("ttft_ms"), first_pcm=end.get("first_pcm_ms"), total=end.get("total_ms"),
             chunks=gen.get("chunks"), chars=gen.get("chars"), decode_ms=gen.get("decode_ms"),
             chunks_per_s=gen.get("chunks_per_s"), result=end.get("llm_result", "-"),
+            flow_steps=audio.get("flow_steps"),
         )
+
+    # Thermal / degrade policy trace (events carry the device wall clock; start_ms is the same clock).
+    def rel_s(e):
+        return round((e.get("t_wall_ms", start_ms) - start_ms) / 1000)
+
+    policy = []
+    last_state = None
+    for e in events:
+        if e["event"] == "runtime.thermal":
+            if e.get("os_thermal_state") != last_state:
+                last_state = e.get("os_thermal_state")
+                policy.append((rel_s(e), "os status", f"{last_state} (policy level {e.get('level')})"))
+        elif e["event"] == "runtime.degrade":
+            policy.append((rel_s(e), "degrade", f"level {e.get('level')}: {e.get('actions') or 'none'}; "
+                                                 f"flow_steps {e.get('flow_steps')}, cap {e.get('max_response_tokens')}"))
+        elif e["event"] == "turn.paused":
+            policy.append((rel_s(e), "turn paused", f"{e.get('reason')} ({e.get('level')}, {e.get('source')})"))
+    degrade_levels = [e.get("level") for e in events if e["event"] == "runtime.degrade"]
+    paused = sum(1 for e in events if e["event"] == "turn.paused")
 
     def med(key):
         vals = [t[key] for t in turns if t.get(key) not in (None, 0, 0.0)]
@@ -201,6 +231,12 @@ def main() -> int:
         f"(max {fmt(max((s['ap_c'] or 0) for s in samples), ' C')}); "
         f"battery {fmt(samples[0]['battery_c'], ' C')} -> {fmt(samples[-1]['battery_c'], ' C')}; "
         f"max thermal status {max((s['thermal_status'] or 0) for s in samples)}",
+        f"- degrade policy: {len(degrade_levels)} level change(s)"
+        + (f" ({' -> '.join(degrade_levels)})" if degrade_levels else "")
+        + f", {paused} turn(s) paused; flow steps used: "
+        + ", ".join(f"K={k}: {n}" for k, n in sorted(
+            ((k, sum(1 for t in turns if t.get("flow_steps") == k)) for k in {t.get("flow_steps") for t in turns}),
+            key=lambda kv: (kv[0] is None, kv[0]))),
         "",
         "A 'chunk' is one streamed LLM callback: one token on LiteRT-LM, possibly several tokens on",
         "Genie. Compare chunks/s across runs of the same backend, not across backends.",
@@ -215,12 +251,18 @@ def main() -> int:
             f"| {s['t_s']} | {s['turn']} | {fmt(s['pss_mb'])} | {fmt(s['rss_mb'])} | {fmt(s['skin_c'])} "
             f"| {fmt(s['ap_c'])} | {fmt(s['cp_c'])} | {fmt(s['battery_c'])} | {fmt(s['thermal_status'])} |"
         )
+    lines += ["", "## Thermal policy trace", ""]
+    if policy:
+        lines += ["| t (s) | what | detail |", "|---|---|---|"]
+        lines += [f"| {t} | {what} | {detail} |" for t, what, detail in policy]
+    else:
+        lines.append("No `runtime.thermal` / `runtime.degrade` / `turn.paused` events during the run.")
     lines += [
         "",
         "## Turns",
         "",
-        "| # | t (s) | id | ttft | first_pcm | total | chunks | chars | decode ms | chunks/s | result | reply |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| # | t (s) | id | ttft | first_pcm | total | chunks | chars | decode ms | chunks/s | K | result | reply |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for t in turns:
         reply = t["reply"].replace("|", "\\|").replace("\n", " ")[:80]
@@ -228,7 +270,7 @@ def main() -> int:
         lines.append(
             f"| {t['gid']} | {t['t_s']} | {t['id']} | {fmt(t.get('ttft'))} | {fmt(t.get('first_pcm'))} "
             f"| {fmt(t.get('total'))} | {fmt(t.get('chunks'))} | {fmt(t.get('chars'))} | {fmt(t.get('decode_ms'))} "
-            f"| {round(cps, 1) if cps else '-'} | {t['result']} | {reply} |"
+            f"| {round(cps, 1) if cps else '-'} | {fmt(t.get('flow_steps'))} | {t['result']} | {reply} |"
         )
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nreport: {report}")

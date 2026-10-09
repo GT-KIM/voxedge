@@ -102,6 +102,41 @@ Readings:
   implement.
 - Charging was present in all runs (adb needs USB), so battery heat is in every figure.
 
+### Qwen3-4B Genie with the thermal/degrade policy active (2026-10-09, airplane mode on, USB-powered)
+
+Same harness and prompt battery, started at SKIN 33.6 °C / AP 39.3 °C after a cool-down to 33 °C,
+with the stop guards raised to thermal status 3 / SKIN 44 °C so the app's own policy
+(`runtime.degrade`, D27) could act instead of the harness stopping first. Report:
+`output/llm_eval/sustained_qwen3-4b-genie-thermal-policy_20261009-132516.md`.
+
+| Metric | Value |
+|---|---|
+| Turns / duration | 36 / 9 min 06 s, 0 failures — stopped by the SKIN 44 °C guard, **thermal status never exceeded 2** |
+| OS thermal status | 1 (LIGHT) at ~1.8 min (SKIN ~39.8 °C), 2 (MODERATE) at 3.9 min (SKIN 41.8 °C); status 3 not reached by SKIN 44.0 °C / AP 48.4 °C |
+| Policy | `elevated` at 3.9 min on the MODERATE callback: TTS K 6 → 5 (14 turns at K=6, 22 at K=5), response cap 120 → 60; no turn paused |
+| Effect on answers | EN median 222 → 112 chars (51 → 27 chunks) after the step; KO answers were already under the halved cap (57 → 61 chars) |
+| TTFT warm | 104 ms (EN) before and 111 ms after the step; language-switch re-prefill 1.2–1.7 s as before |
+| First PCM | pre-step EN median 1168 ms / KO 1343 ms over the same first four minutes as the 2026-10-06 runs (EN 1086–1178, KO 953–1263), i.e. no change from D27/D28; post-step EN 1473 / KO 1441 ms |
+| Decode | 10.8 → 9.5 chunks/s (first vs last third, **−12 %**); TTS synthesis per clause stayed at ~226 ms (event log), so the slowdown is the LLM/HTP side |
+| SKIN | 33.6 → 41.8 °C in the first 3.9 min (+8.2 °C), then 41.8 → 44.0 °C over the next 5.2 min with the policy active (+2.2 °C) |
+| Turn rate | 3.3 turns/min before the step, 4.5 after (shorter answers; the harness pauses only 1 s between turns, so it refilled the saved time with more prefill work) |
+
+Readings:
+- First on-device activation of the policy under real heat (the 2026-10-07 check used
+  `cmd thermalservice override-status`). It fired on the first MODERATE callback and applied the
+  documented actions; the shortened answers and K=5 are visible per turn in the report.
+- The policy cannot keep the HTP path *below* status 2: it only reacts at status 2, and status 2
+  arrived at the same 3.9 min as in the evening run without it. What the run shows is that the path
+  **stayed at status 2 for 5+ minutes without escalating to SEVERE**, with heating slowing to
+  +2.2 °C over that stretch. Whether the policy caused the slower heating is **not established**:
+  there is no control run that continued past status 2 without the policy, heating saturates on
+  its own, and the harness's higher turn rate partly offsets the per-turn savings.
+- The OS did not raise status 3 at SKIN 44 °C, so the earlier note "SKIN thresholds 38/40/42/45 °C"
+  does not describe this device's status mapping; observed: status 1 near 39.7 °C, status 2 near
+  41.7 °C, status 3 not seen up to 44.0 °C.
+- Open: a control run without the policy past status 2 (needs a debug switch to disable it), and a
+  longer run to see whether status 2 is a plateau or just slower growth.
+
 ## ASR — owned, offline (sherpa-onnx, per-language)
 
 | Model | Role | Decode | Notes |
@@ -158,5 +193,6 @@ add those for speech-end → audio (~1.2 s). Later clauses pipeline (synth N ∥
 
 ## Open / next
 INT8 short-chunk + representative calibration · barge-in with reference-signal AEC · iOS feasibility
-(Core ML / MLX) · multi-SoC portability · sustained full-loop thermal on the Qwen3 Genie path (the
-Gemma path has its 10-min run above) · Supertonic OpenRAIL-M license review for any redistribution.
+(Core ML / MLX) · multi-SoC portability · a no-policy control run on the Qwen3 Genie path past
+thermal status 2 (the policy run is above; the Gemma path has its 10-min run) · Supertonic
+OpenRAIL-M license review for any redistribution.
