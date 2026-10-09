@@ -26,6 +26,19 @@ Runs on SM8750 via Genie (HTP).
 LLM is not the conversational-latency bottleneck; load once at startup (never per turn).
 Repro: `converter/phase1/run_qwen3_genie_device_spike.sh`.
 
+> **Re-measured 2026-10-09 (same bundle, same QAIRT 2.46 libs, cool device, `genie-t2t-run
+> --profile`):** decode **13.5 tok/s** with a 50-token prompt and **11.5 tok/s** with a 2,376-token
+> prompt (prefill 596 / 1,280 tok/s); the same numbers at thermal status 1-2. The 22 tok/s row above
+> is the 2026-05-30 measurement and did not reproduce on the current device build
+> (Android 16, `F966NKSSCBZH3`); the cause is not identified. The in-app rate (~11-12 streamed
+> chunks/s, one token per chunk in English) matches the standalone rate at equal context, so the
+> app adds no decode overhead of its own, and a 65 % -> 45 % context occupancy change (tools off)
+> moved decode by only +5-8 % while cutting the language-switch re-prefill from 1.2-1.6 s to
+> 0.6-1.0 s. The HTP `perf_profile` is honoured (burst 14.0 / sustained_high_performance 11.7 /
+> high_performance 11.2 / balanced 9.3 tok/s), the ctx-bins are byte-identical to the May files,
+> and no thermal, memory, swap, or CPU limit was active during these runs; the device has had an
+> OS update since May (build 2026-08-11) and was folded (cover display) for every October run.
+
 ## LLM — Gemma 4 E2B, LiteRT-LM 0.13.1 (GPU backend), in-app sustained run
 
 Measured 2026-10-06 inside the app with the full loop resident (Gemma + Supertonic TTS + sherpa-onnx
@@ -147,6 +160,12 @@ Readings:
   **565 ms**, the other warm EN turns 643-729 ms and KO 876-1047 ms as before, language-switch
   turns 1.67-1.76 s. The decode rate (~11 chunks/s) and the language-switch cost are unchanged by
   this fix.
+- **Language switch (2026-10-09, later):** the system prompt now keeps everything shared by both
+  languages (persona, policies, tools, facts) first and the language-specific block last, so the
+  KV rewind on an EN<->KO switch re-prefills only the language block and the history. Same
+  battery, 12 turns: switch TTFT **582 / 671 / 829 ms** (was 1,189-1,610 ms), switch first PCM
+  1.08-1.83 s (was 1.67-2.12 s), warm turns and answer length unchanged, tool-calling eval
+  unchanged (5/11 selection, 0 false positives, same cases as the same-day baseline).
 
 ## ASR — owned, offline (sherpa-onnx, per-language)
 

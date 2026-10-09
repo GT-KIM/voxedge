@@ -288,8 +288,7 @@ object PromptAssembler {
         }
         val langModule = if (resolved == Lang.KO) LANG_KO else LANG_EN
         val styleDemo = if (resolved == Lang.KO) STYLE_DEMO_KO else STYLE_DEMO_EN
-        val base = "$character $SUBSTANCE $HONESTY $PLAYBOOK $ACCURACY $SPEECH_INPUT " +
-            "$FOLLOWUP $VOICE $langModule $styleDemo"
+        val base = "$character $SUBSTANCE $HONESTY $PLAYBOOK $ACCURACY $SPEECH_INPUT"
         // Native-FC engines get the policy (when to use a tool); prompt-convention engines get the
         // full module (policy + [TOOL_CALL] syntax + tool list). Either way, no tools -> nothing.
         val toolModule = when {
@@ -298,7 +297,20 @@ object PromptAssembler {
             else -> toolsModule(tools)
         }
         val factsMod = factsModule(facts)
-        return listOf(base, toolModule, factsMod).filter { it.isNotEmpty() }.joinToString(" ")
+        // Module ORDER matters for the KV cache: everything that is the same in both languages
+        // (persona, policies, tools, facts) comes first and the language-specific modules last, so
+        // an EN<->KO switch rewinds to a shared prefix of ~10k chars and re-prefills only the
+        // language block plus the history. With the language module in the middle (pre
+        // 2026-10-09) every switch re-prefilled the tool module and facts too: 1.2-1.6 s TTFT
+        // measured on the Qwen3 Genie path. FOLLOWUP + VOICE + language + few-shot stay contiguous
+        // and last, as they were: moving the tool module between VOICE and the language block
+        // doubled English answer length (hit the 120-token cap) in the first device run.
+        // Nothing English may follow the language block: a one-line [TOOL_CALL] syntax reminder
+        // placed here (tried 2026-10-09) made Korean tool prompts answer in English and did not
+        // bring the missed en-remember case back. The looser marker the model now writes for that
+        // case ("[remember_fact]{...}") is accepted by ToolCallFilter instead.
+        return listOf(base, toolModule, factsMod, FOLLOWUP, VOICE, langModule, styleDemo)
+            .filter { it.isNotEmpty() }.joinToString(" ")
     }
 
     /** English default template, for callers/tests that want a static system string. */

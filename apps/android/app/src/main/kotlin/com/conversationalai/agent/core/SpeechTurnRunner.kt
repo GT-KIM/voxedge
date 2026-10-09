@@ -262,7 +262,9 @@ class SpeechTurnRunner(
             var result: LlmEngine.Result
             while (true) {
                 step += 1
-                val filter = if (toolLoop) ToolCallFilter(onText = emitText) else null
+                val filter = if (toolLoop) {
+                    ToolCallFilter(onText = emitText, toolNames = tools!!.specs.map { it.name }.toSet())
+                } else null
                 val onLlmToken = fun(tok: String) {
                     if (!generationEpoch.isCurrent(gid)) return
                     if (ttftMs == 0L) {

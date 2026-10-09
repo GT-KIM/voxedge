@@ -15,6 +15,49 @@ class ToolCallFilterTest {
         return out.toString() to filter.call
     }
 
+    private fun runLenient(vararg chunks: String): Pair<String, com.conversationalai.agent.core.tools.ToolCall?> {
+        val out = StringBuilder()
+        val filter = ToolCallFilter(onText = { out.append(it) }, toolNames = setOf("remember_fact", "get_datetime"))
+        chunks.forEach { filter.accept(it) }
+        filter.finish()
+        return out.toString() to filter.call
+    }
+
+    @Test
+    fun bracketedToolNameWithArgumentsIsAcceptedAsACall() {
+        // Device 2026-10-09: the model wrote the tool name as the tag and the arguments as the body.
+        val (text, call) = runLenient(
+            "Got it. ", "[remember_fact]{\"key\": \"favorite color\", \"value\": \"teal\"}",
+        )
+        assertEquals("Got it. ", text)
+        assertEquals("remember_fact", call?.name)
+        assertEquals("teal", call?.arguments?.get("value"))
+        assertEquals("favorite color", call?.arguments?.get("key"))
+    }
+
+    @Test
+    fun bracketedToolNameSplitAcrossChunksAndWithExplicitNameField() {
+        val (text, call) = runLenient(
+            "[get", "_date", "time]", " {\"name\": \"get_datetime\", \"arguments\": {}}", " trailing",
+        )
+        assertEquals("", text)
+        assertEquals("get_datetime", call?.name)
+        // A nested string containing braces must not end the object early.
+        val (_, call2) = runLenient("[remember_fact]{\"key\": \"a}b\", \"value\": \"{x\"}")
+        assertEquals("a}b", call2?.arguments?.get("key"))
+    }
+
+    @Test
+    fun bracketedTextThatIsNotAToolNameIsSpoken() {
+        val (text, call) = runLenient("See [note] {this} and [remember_facts] {that}.")
+        assertEquals("See [note] {this} and [remember_facts] {that}.", text)
+        assertNull(call)
+        // Without a tool-name set the loose form is ordinary text.
+        val (plain, none) = run("[remember_fact]{\"value\": \"teal\"}")
+        assertEquals("[remember_fact]{\"value\": \"teal\"}", plain)
+        assertNull(none)
+    }
+
     @Test
     fun plainTextPassesThroughUntouched() {
         val (text, call) = run("Hello ", "there, how are you?")

@@ -76,4 +76,25 @@ class PromptAssemblerTest {
         // No facts -> no facts module (no dangling header).
         assertFalse(PromptAssembler.systemPrompt(Lang.EN).contains("durable facts"))
     }
+
+    @Test
+    fun languageSpecificModulesComeLastSoASwitchSharesTheKvPrefix() {
+        // A KO<->EN switch re-prefills from the first differing token. Everything shared (persona,
+        // policies, tools, facts) must precede the language directive and the few-shot, so the
+        // shared prefix covers the tool module and the facts (measured: 1.2-1.6 s per switch
+        // when the language module sat in the middle).
+        val specs = listOf(
+            com.conversationalai.agent.core.tools.ToolSpec("get_datetime", "current time"),
+        )
+        val facts = "- name: Kwantae"
+        val ko = PromptAssembler.systemPrompt(Lang.KO, tools = specs, facts = facts)
+        val en = PromptAssembler.systemPrompt(Lang.EN, tools = specs, facts = facts)
+        val shared = ko.commonPrefixWith(en).length
+        assertTrue(shared > ko.indexOf("get_datetime"))
+        assertTrue(shared > ko.indexOf("name: Kwantae"))
+        assertTrue(ko.indexOf("Reply ONLY in Korean") > ko.indexOf("name: Kwantae"))
+        assertTrue(en.indexOf("Reply ONLY in English") > en.indexOf("name: Kwantae"))
+        // The language block is small next to the shared prefix (>= 80 % shared).
+        assertTrue(shared * 10 >= ko.length * 8)
+    }
 }
