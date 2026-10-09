@@ -167,6 +167,19 @@ Readings:
   1.08-1.83 s (was 1.67-2.12 s), warm turns and answer length unchanged, tool-calling eval
   unchanged (5/11 selection, 0 false positives, same cases as the same-day baseline).
 
+- **System-side pass (2026-10-10):** engine loading moved off the main thread (the activity used
+  to block in `onCreate` for the whole load: Qwen3 ~6 s, Gemma ~14 s, with the OS logging
+  "activity pause timeout"), with the CPU-side engines (ASR, denoiser, VAD) loading in parallel
+  with the HTP loads; the event logger became asynchronous and rotating; the hands-free loop
+  recovers from a throwing turn and a 20 s stall watchdog aborts a silent generation. Same-day
+  A/B of this 3-min battery from a cool start (9 turns each): warm first PCM EN 602-888 ->
+  612-793 ms, KO 939-1089 -> 924-1059 ms, decode 10.1 -> 10.4 chunks/s, switch TTFT 516/647 ->
+  548/648 ms, PSS peak unchanged - i.e. no change on the turn path, as intended. Qwen3
+  time-to-ready 5.0-6.1 s (`session.start.init_ms`). Per-turn CPU of a typed Qwen3 turn (~14 s,
+  `/proc/<pid>/task/*/stat`): main thread 1.0-1.3 s, coroutine dispatchers 1.8 s, the three Genie
+  worker threads 15.5 s - the latter also spin at ~33 % each while the app is idle (Genie
+  `poll: true`), so an open app costs about one big core even between turns.
+
 ## ASR — owned, offline (sherpa-onnx, per-language)
 
 | Model | Role | Decode | Notes |

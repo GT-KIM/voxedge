@@ -42,6 +42,11 @@ class SpeechTurnRunner(
     private val tools: ToolRegistry? = null,
     // TTS flow-matching steps per clause (settings; quality/latency knob: K=4 fast, K=6 default).
     private val flowSteps: () -> Int = { 6 },
+    // Stall watchdog: abort the generation when the engine has produced nothing (no token, no
+    // step) for this long. A hung native decode would otherwise hold the turn - and the muted
+    // half-duplex mic - forever. Generous against legit silences (a cold/rewind re-prefill of the
+    // full prompt is ~2-3 s on device; a tool step a few hundred ms).
+    private val stallTimeoutMs: Long = DEFAULT_STALL_TIMEOUT_MS,
 ) {
     /** The LLM-output -> TTS-input boundary (MCP server + in-process client around [tts]). */
     private val ttsMcp = McpTts(tts, inputBuilder)
@@ -74,6 +79,9 @@ class SpeechTurnRunner(
         var tokenChunks = 0L
         var tokenChars = 0L
         var lastTokenMs = 0L
+        // Last sign of life from the engine (ns); the watchdog aborts when it goes stale.
+        val lastProgressNs = java.util.concurrent.atomic.AtomicLong(System.nanoTime())
+        var stalled = false
 
         onState(ConvState.GENERATING)
         val mcpTap = McpMessageTap { direction, method, id, isError, bytes ->
@@ -279,15 +287,43 @@ class SpeechTurnRunner(
                     tokenChunks += 1
                     tokenChars += tok.length
                     lastTokenMs = elapsedSince(t0)
+                    lastProgressNs.set(System.nanoTime())
                     if (filter != null) filter.accept(tok) else emitText(tok)
                 }
+                lastProgressNs.set(System.nanoTime())
+                // Watchdog for this generation step: runs beside the blocking native call and
+                // aborts it when the engine stops producing output. The engine returns ABORTED
+                // (Genie unblocks on abort; LiteRT-LM releases its completion latch), the turn
+                // ends normally, and the session is re-prefilled on the next turn.
+                val watchdog = if (stallTimeoutMs > 0) launch {
+                    while (true) {
+                        kotlinx.coroutines.delay(minOf(stallTimeoutMs, WATCHDOG_TICK_MS))
+                        val silentMs = (System.nanoTime() - lastProgressNs.get()) / 1_000_000
+                        if (silentMs < stallTimeoutMs) continue
+                        stalled = true
+                        Log.e(TAG, "LLM stalled for ${silentMs}ms (step $step); aborting generation")
+                        eventLogger?.log(
+                            event = "llm.stall",
+                            generationId = gid,
+                            elapsedMs = elapsedSince(t0),
+                            attributes = mapOf("step" to step, "silent_ms" to silentMs, "chunks" to tokenChunks),
+                        )
+                        llm.abort()
+                        break
+                    }
+                } else null
                 // The first step of a re-prefill turn may rewind: KV prefix-match against the
                 // full transcript instead of prefilling from an empty cache.
-                result = if (step == 1 && rewindFirstStep) {
-                    llm.generateRewind(stepPrompt, onLlmToken)
-                } else {
-                    llm.generate(stepPrompt, onLlmToken)
+                result = try {
+                    if (step == 1 && rewindFirstStep) {
+                        llm.generateRewind(stepPrompt, onLlmToken)
+                    } else {
+                        llm.generate(stepPrompt, onLlmToken)
+                    }
+                } finally {
+                    watchdog?.cancel()
                 }
+                if (stalled && result == LlmEngine.Result.OK) result = LlmEngine.Result.ABORTED
                 filter?.finish()
                 val call = filter?.call
                 if (call == null) {
@@ -330,6 +366,7 @@ class SpeechTurnRunner(
                 // Dispatch records tool.call/tool.result + toolsUsed via the registry observer.
                 val toolResult = tools!!.dispatch(call)
                 stepPrompt = template.toolResponse(toolResult.content)
+                lastProgressNs.set(System.nanoTime())
             }
             val decodeMs = (lastTokenMs - ttftMs).coerceAtLeast(0L)
             eventLogger?.log(
@@ -384,6 +421,7 @@ class SpeechTurnRunner(
                 "spoken_chars" to record.spokenContent.length,
                 "barged_in" to record.bargedIn,
                 "llm_result" to llmResult.name,
+                "stalled" to stalled,
             ),
         )
         record
@@ -444,6 +482,9 @@ class SpeechTurnRunner(
         /** Generation steps per turn (initial + after tool responses). Bounded so a confused
          *  model can't chain tool calls while the user waits in silence. */
         const val MAX_TOOL_STEPS = 3
+        /** No engine output for this long = stalled generation (aborted by the watchdog). */
+        const val DEFAULT_STALL_TIMEOUT_MS = 20_000L
+        private const val WATCHDOG_TICK_MS = 500L
 
         // Prosody finishing (44.1 kHz samples): breath pauses between clauses + click-free joins.
         private const val SENTENCE_ENDERS = ".!?…。！？"

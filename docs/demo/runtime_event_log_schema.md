@@ -11,7 +11,11 @@ Default path on device:
 filesDir/runtime_logs/turn_events.jsonl
 ```
 
-The absolute path is emitted in the first `session.start` event as `log_path`.
+The absolute path is emitted in the first `session.start` event as `log_path`. Since 2026-10-10
+`session.start` also carries `init_ms`: launch to every engine loaded (the engines load on a
+background thread; the activity shows a loading screen meanwhile). The writer is asynchronous
+(a single daemon thread, flushed whenever its queue drains, closed on `session.end`) and rotates
+the file to `turn_events.jsonl.1` once it exceeds 8 MB.
 
 ## Format
 
@@ -120,7 +124,14 @@ TTS/playback:
 
 Turn/control:
 
-- `turn.end` — includes `llm_result` (`OK`/`CONTEXT_EXCEEDED`/`ABORTED`/`ERROR`) since 2026-06-10.
+- `turn.end` — includes `llm_result` (`OK`/`CONTEXT_EXCEEDED`/`ABORTED`/`ERROR`) since 2026-06-10,
+  and `stalled` (2026-10-10): true when the stall watchdog aborted the generation.
+- `llm.stall` (2026-10-10) — the engine produced no output for the watchdog timeout (20 s) and
+  was aborted (`step`, `silent_ms`, `chunks`); the turn ends with `llm_result: ABORTED` and the
+  next turn re-prefills the session.
+- `turn.failed` (2026-10-10) — a turn threw (`source`: `hands_free` | `speculative` | `typed`,
+  `error`: exception class and message, `state`). The engine session is reset, the failure cue is
+  voiced, and the hands-free loop returns to LISTENING instead of staying stuck with the mic muted.
 - `feedback.cue` (2026-06-20) — an audible cue played because a turn would otherwise be silent
   (`cue`: `NOT_UNDERSTOOD` | `GENERATION_FAILED` | `PLAYBACK_FAILED`, plus `lang` for spoken cues).
 - `control.barge_in`

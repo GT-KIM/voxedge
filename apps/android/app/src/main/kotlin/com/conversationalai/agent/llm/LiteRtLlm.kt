@@ -36,6 +36,9 @@ class LiteRtLlm : LlmEngine {
     private var conversation: Conversation? = null
     @Volatile private var warm = false
     @Volatile private var aborted = false
+    /** Completion latch of the in-flight [generate]; [abort] releases it so a stalled runtime
+     *  cannot hold the caller (and the turn) forever. */
+    @Volatile private var inFlight: CountDownLatch? = null
     private var systemPrompt: String = ""
     private var sampling: LlmSampling = LlmSampling()
     private var modelName: String = "litert-lm(uninit)"
@@ -83,6 +86,7 @@ class LiteRtLlm : LlmEngine {
         val conv = conversation ?: createConversation() ?: return LlmEngine.Result.ERROR
         aborted = false
         val done = CountDownLatch(1)
+        inFlight = done
         var failure: Throwable? = null
         runCatching {
             conv.sendMessageAsync(prompt, object : MessageCallback {
@@ -101,6 +105,7 @@ class LiteRtLlm : LlmEngine {
             })
             done.await()
         }.onFailure { failure = it }
+        inFlight = null
 
         val result = when {
             aborted -> LlmEngine.Result.ABORTED
@@ -118,6 +123,9 @@ class LiteRtLlm : LlmEngine {
     override fun abort() {
         aborted = true
         warm = false
+        // The runtime keeps decoding in the background (no cancel API), but the caller returns now
+        // with ABORTED; the stale stream is dropped by the `aborted` guard in onMessage.
+        inFlight?.countDown()
     }
 
     override val sessionCapable: Boolean get() = true

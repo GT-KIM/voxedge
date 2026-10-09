@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.conversationalai.agent.asr.OfflineAsr
@@ -95,6 +96,11 @@ class MainActivity : ComponentActivity() {
     private var capIdx = 0   // rotating index for dumped capture wavs (cap_dump/)
     private var status by mutableStateOf("starting...")
     private var micGranted by mutableStateOf(false)
+    // Engines are loaded on a background thread at start-up; the real screen (and every handler
+    // that touches an engine) is reachable only once this flips. Debug intents that arrive before
+    // then are queued and replayed.
+    private var runtimeReady by mutableStateOf(false)
+    private val pendingIntents = mutableListOf<android.content.Intent>()
 
     // Session persistence (left drawer): one JSONL file per session, auto-saved after each turn.
     private lateinit var sessionStore: SessionStore
@@ -153,7 +159,39 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val runtime = RuntimeInitializer(this).initialize()
+        // The UI is a light (white) surface, so use DARK status-bar icons — otherwise the system
+        // icons (clock, the airplane-mode indicator, battery) render white-on-white and vanish.
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightStatusBars = true
+        eventLogger = RuntimeEventLogger(File(filesDir, "runtime_logs/turn_events.jsonl"))
+
+        // Engines load OFF the main thread (TTS DLCs + the LLM bundle + ASR take 6-14 s on the
+        // device); the window shows a loading screen meanwhile instead of blocking in onCreate,
+        // which left the activity unresponsive (ANR-prone) for the whole load.
+        setContent {
+            MaterialTheme {
+                Surface(Modifier.fillMaxSize()) {
+                    if (runtimeReady) Screen() else LoadingScreen(status)
+                }
+            }
+        }
+        intent?.let { if (hasDebugExtras(it)) pendingIntents += it }
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        Thread({
+            val runtime = RuntimeInitializer(this).initialize()
+            runOnUiThread {
+                if (isDestroyed) { releaseRuntime(runtime); return@runOnUiThread }
+                wireRuntime(runtime, initMs = android.os.SystemClock.elapsedRealtime() - t0)
+                runtimeReady = true
+                val queued = pendingIntents.toList()
+                pendingIntents.clear()
+                queued.forEach { handleDebugTurnIntent(it) }
+            }
+        }, "runtime-init").start()
+    }
+
+    /** Wire the loaded engines into the controller, settings, and session store (main thread). */
+    private fun wireRuntime(runtime: RuntimeInitializer.Result, initMs: Long) {
         tts = runtime.tts
         inputBuilder = runtime.inputBuilder
         llm = runtime.llm
@@ -192,7 +230,6 @@ class MainActivity : ComponentActivity() {
         // shown by the chips, and a stray English "engine ready..." line would break the
         // single-language UI. Keep runtime.status only when it carries a real (error) message.
         status = if (runtime.initOk && runtime.llmOk && runtime.asrOk && runtime.vadOk) "" else runtime.status
-        eventLogger = RuntimeEventLogger(File(filesDir, "runtime_logs/turn_events.jsonl"))
 
         micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -205,9 +242,11 @@ class MainActivity : ComponentActivity() {
                 "enhancer_ready" to enhanceOk,
                 "vad_ready" to vadOk,
                 "mic_granted" to micGranted,
+                "init_ms" to initMs,   // launch -> every engine loaded (off the main thread)
                 "log_path" to File(filesDir, "runtime_logs/turn_events.jsonl").absolutePath,
             ),
         )
+        Log.i(TAG, "runtime ready in ${initMs} ms (llm=${llmModel.id})")
 
         // Offline tool registry + the durable memory store it shares (for prompt grounding).
         val deviceTools = com.conversationalai.agent.devicetools.DeviceTools.build(this)
@@ -227,13 +266,18 @@ class MainActivity : ComponentActivity() {
             onUserText = { appendUserItem(it) },
             onAssistantDelta = { streamingReply += it },
             onTurn = { r -> appendTurnResult(r) },
+            // Debug dump of the captured utterance. Off the turn's critical path: the controller
+            // calls this right before ASR, and a synchronous WAV write sat between speech end and
+            // the transcript. The samples are read-only downstream, so no copy is needed.
             onUtteranceCaptured = { samples ->
-                runCatching {
-                    val dir = File(filesDir, "cap_dump").apply { mkdirs() }
-                    val f = File(dir, "utt_${capIdx++ % 6}.wav")
-                    com.conversationalai.agent.audio.WavWriter.write(f, samples, 16000)
-                    Log.i(TAG, "dumped capture -> ${f.absolutePath} (${samples.size} samples)")
-                }.onFailure { Log.e(TAG, "capture dump failed", it) }
+                val f = File(File(filesDir, "cap_dump"), "utt_${capIdx++ % 6}.wav")
+                lifecycleScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        f.parentFile?.mkdirs()
+                        com.conversationalai.agent.audio.WavWriter.write(f, samples, 16000)
+                        Log.i(TAG, "dumped capture -> ${f.absolutePath} (${samples.size} samples)")
+                    }.onFailure { Log.e(TAG, "capture dump failed", it) }
+                }
             },
             // Offline device tools (clock/timer/alarm/battery/flashlight/calculate/memory): enables
             // the agentic tool-use loop on session-capable engines. The memory handle is also passed
@@ -263,22 +307,52 @@ class MainActivity : ComponentActivity() {
         sessionStore = SessionStore(File(filesDir, "sessions"))
         currentSessionId = "s${System.currentTimeMillis()}"
         refreshSessionList()
+    }
 
-        // The UI is a light (white) surface, so use DARK status-bar icons — otherwise the system
-        // icons (clock, the airplane-mode indicator, battery) render white-on-white and vanish.
-        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
-            .isAppearanceLightStatusBars = true
-
-        setContent {
-            MaterialTheme { Surface(Modifier.fillMaxSize()) { Screen() } }
-        }
-        handleDebugTurnIntent(intent)
+    /** Engines that finished loading after the activity was already destroyed. */
+    private fun releaseRuntime(runtime: RuntimeInitializer.Result) {
+        runCatching { runtime.tts.release() }
+        runCatching { runtime.llm.release() }
+        runCatching { runtime.asr.release() }
+        runCatching { runtime.enhancer.release() }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        if (!runtimeReady) {
+            if (hasDebugExtras(intent)) pendingIntents += intent   // replayed once the engines are up
+            return
+        }
         handleDebugTurnIntent(intent)
     }
+
+    private fun hasDebugExtras(intent: android.content.Intent): Boolean =
+        intent.hasExtra(EXTRA_DEBUG_TYPED_TURN) || intent.hasExtra(EXTRA_DEBUG_ASR_WAV) ||
+            intent.hasExtra(EXTRA_DEBUG_MCP_ENDPOINT)
+
+    /** Shown until the engines are loaded; follows the device language like the rest of the UI. */
+    @Composable
+    private fun LoadingScreen(statusLine: String) {
+        val korean = java.util.Locale.getDefault().language == "ko"
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        ) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(16.dp))
+            Text(
+                if (korean) "모델을 불러오는 중..." else "Loading models...",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (statusLine.isNotBlank() && statusLine != "starting...") {
+                Spacer(Modifier.height(8.dp))
+                Text(statusLine, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+
 
     /** Headless adb test drive (dev-only): run one full typed turn (prompt -> LLM -> clause ->
      *  TTS -> playback) without touching the UI, so the pipeline can be exercised with the screen
@@ -715,15 +789,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (::eventLogger.isInitialized) eventLogger.log("session.end")
-        tts.release()
+        if (::controller.isInitialized) controller.stop()
+        mcpEndpoints.forEach { it.stop() }
+        thermalMonitor?.stop()
+        if (::tts.isInitialized) tts.release()
         if (::llm.isInitialized) llm.release()
         if (::asr.isInitialized) asr.release()
         if (::platformAsr.isInitialized) platformAsr.release()
-        mcpEndpoints.forEach { it.stop() }
-        thermalMonitor?.stop()
         if (::enhancer.isInitialized) enhancer.release()
-        if (::controller.isInitialized) controller.stop()
+        if (::eventLogger.isInitialized) {
+            eventLogger.log("session.end")
+            eventLogger.close()   // the writer is asynchronous; make the tail durable
+        }
         super.onDestroy()
     }
 

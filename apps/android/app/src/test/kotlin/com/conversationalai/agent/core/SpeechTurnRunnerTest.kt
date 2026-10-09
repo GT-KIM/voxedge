@@ -89,6 +89,7 @@ class SpeechTurnRunnerTest {
             onDelta = {},
         )
 
+        logger.flush()
         val joined = file.readText()
         for (event in listOf(
             "llm.generate_start",
@@ -105,6 +106,36 @@ class SpeechTurnRunnerTest {
         assertTrue(joined.contains("\"generation_id\":$gid"))
         assertTrue(joined.contains("\"asr_ms\":12"))
         assertTrue(joined.contains("\"first_pcm_ms\""))
+    }
+
+    @Test
+    fun watchdogAbortsAGenerationThatStopsProducingOutput() = runBlocking {
+        val file = File.createTempFile("turn-events-stall", ".jsonl").also { it.deleteOnExit() }
+        file.writeText("")
+        val logger = RuntimeEventLogger(file)
+        val epoch = GenerationEpoch()
+        val gid = epoch.next()
+        val llm = StallingLlm()
+        val tts = FakeTts()
+        val inputBuilder = FakeInputBuilder()
+        val player = FakePlayer()
+
+        val record = SpeechTurnRunner(
+            llm = llm, tts = tts, inputBuilder = inputBuilder, playerFactory = { player },
+            generationEpoch = epoch, onPlayerStarted = {}, onPlayerStopped = {}, onState = {},
+            onSpeakingStarted = {}, eventLogger = logger, stallTimeoutMs = 300L,
+        ).run(gid = gid, prompt = "prompt", userText = "user", asrMs = 0L, onDelta = {})
+
+        // The engine emitted one token, then hung until the watchdog aborted it.
+        assertTrue(llm.aborted)
+        assertEquals("partial", record.replyText)
+        assertFalse(record.bargedIn)            // not a barge-in: the epoch is still current
+        logger.flush()
+        val joined = file.readText()
+        assertTrue(joined.contains("\"event\":\"llm.stall\""))
+        assertTrue(joined.contains("\"stalled\":true"))
+        assertTrue(joined.contains("\"llm_result\":\"ABORTED\""))
+        assertTrue(player.stopped)
     }
 
     private fun runner(
@@ -135,6 +166,19 @@ class SpeechTurnRunnerTest {
             return LlmEngine.Result.OK
         }
         override fun abort() = Unit
+    }
+
+    /** Emits one token, then blocks until [abort] (a hung native decode). */
+    private class StallingLlm : LlmEngine {
+        @Volatile var aborted = false
+        private val released = java.util.concurrent.CountDownLatch(1)
+        override fun name(): String = "stalling-llm"
+        override fun generate(prompt: String, onToken: (String) -> Unit): LlmEngine.Result {
+            onToken("partial")
+            released.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            return if (aborted) LlmEngine.Result.ABORTED else LlmEngine.Result.OK
+        }
+        override fun abort() { aborted = true; released.countDown() }
     }
 
     private class FakeTts : TtsEngine {

@@ -148,8 +148,14 @@ private fun ConversationContent(
         val working = state.loopState == SpeechLoopUiState.GENERATING ||
             state.loopState == SpeechLoopUiState.TRANSCRIBING ||
             state.loopState == SpeechLoopUiState.SPEAKING
-        LaunchedEffect(items.size, items.lastOrNull()?.text?.length, working) {
+        // Keep the feed pinned to the newest text. Animate only when an ITEM is added; while a
+        // reply streams (its text length changes with every delta), jump instantly - an animated
+        // scroll per token kept the main thread busy for several frames per LLM callback.
+        LaunchedEffect(items.size, working) {
             if (items.isNotEmpty()) listState.animateScrollToItem(items.lastIndex)
+        }
+        LaunchedEffect(items.lastOrNull()?.text?.length) {
+            if (items.isNotEmpty() && !listState.isScrollInProgress) listState.scrollToItem(items.lastIndex)
         }
         LazyColumn(
             state = listState,

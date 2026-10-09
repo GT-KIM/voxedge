@@ -289,7 +289,7 @@ class ConversationController(
         val ch = Channel<FloatArray>(Channel.UNLIMITED)
         utterances = ch
         consumerJob = scope.launch(Dispatchers.Default) {
-            for (samples in ch) handleUtterance(samples)
+            for (samples in ch) consumeUtterance(samples)
         }
         val mic = MicStream(
             vadModelPath = vadModelPath,
@@ -348,6 +348,19 @@ class ConversationController(
         setState(ConvState.CAPTURING)
         eventLogger?.log("control.barge_in", attributes = mapOf("state" to state.name))
         Log.i(TAG, "BARGE-IN")
+    }
+
+    /** One hands-free utterance, guarded. A turn that throws (a native engine, a tool, the TTS
+     *  input builder) must not take the consumer loop down: without this guard the loop went
+     *  silent for good - mic muted, state stuck in GENERATING - until the app was restarted. */
+    internal suspend fun consumeUtterance(samples: FloatArray) {
+        try {
+            handleUtterance(samples)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            recoverFromTurnFailure("hands_free", t)
+        }
     }
 
     internal suspend fun handleUtterance(samples: FloatArray) {
@@ -473,10 +486,50 @@ class ConversationController(
         onUserText(spec.text)
         setState(ConvState.TRANSCRIBING)   // LISTENING -> TRANSCRIBING; the runner moves on
         spec.job = scope.launch(Dispatchers.Default) {
-            spec.record = generateAndSpeak(spec.gid, spec.text, spec.asrMs, gate = { spec.gate.await() }) {
-                onAssistantDelta(it)
+            try {
+                spec.record = generateAndSpeak(spec.gid, spec.text, spec.asrMs, gate = { spec.gate.await() }) {
+                    onAssistantDelta(it)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                // The endpoint path (commit / mismatch / cancel) still runs and restores the loop;
+                // it just finds no record. Log it and make sure nothing of the turn lingers.
+                recoverFromTurnFailure("speculative", t, restoreListening = false)
             }
         }
+    }
+
+    /**
+     * A turn threw. Tear down whatever is still running for it (playback, decode, the engine
+     * session - its KV may now disagree with the transcript), record `turn.failed`, voice the
+     * failure cue, and put the hands-free loop back to LISTENING with the mic open. Every step is
+     * best-effort: recovery itself must never throw.
+     */
+    private suspend fun recoverFromTurnFailure(source: String, error: Throwable, restoreListening: Boolean = true) {
+        Log.e(TAG, "turn failed ($source): ${error::class.java.simpleName}: ${error.message}", error)
+        eventLogger?.log(
+            "turn.failed",
+            attributes = mapOf(
+                "source" to source,
+                "error" to (error::class.java.simpleName + (error.message?.let { ": " + it.take(120) } ?: "")),
+                "state" to state.name,
+            ),
+        )
+        val cueLang = langCode(sessionLang)
+        runCatching { generationEpoch.cancel() }
+        runCatching { activePlayer?.interrupt() }
+        runCatching { llm.abort() }
+        runCatching { llm.resetSession() }
+        sessionLang = null
+        speculation?.let { runCatching { it.gate.complete(Unit) }; speculation = null }
+        if (!restoreListening || !running) return
+        runCatching { signalFailure(AudibleFeedback.Cue.GENERATION_FAILED, cueLang) }
+        if (!bargeInEnabled) {
+            runCatching { kotlinx.coroutines.delay(TAIL_GUARD_MS) }
+            micStream?.muted = false
+        }
+        if (running) runCatching { setState(ConvState.LISTENING) }
     }
 
     /** Cancel an in-flight speculative turn (user resumed speaking / stop). False if none. */
@@ -506,7 +559,20 @@ class ConversationController(
                 asrMs = asrMs, ttftMs = 0L, firstPcmMs = 0L, totalMs = 0L,
             )
         }
-        val rec = generateAndSpeak(generationEpoch.next(), userText, asrMs, onDelta = onDelta)
+        val gid = generationEpoch.next()
+        val rec = try {
+            generateAndSpeak(gid, userText, asrMs, onDelta = onDelta)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            // Typed/PTT entry: the caller's coroutine would die (and take the activity with it);
+            // hand back an empty record instead and leave the engine session consistent.
+            recoverFromTurnFailure("typed", t, restoreListening = false)
+            TurnRecord(
+                generationId = gid, userText = userText, replyText = "",
+                asrMs = asrMs, ttftMs = 0L, firstPcmMs = 0L, totalMs = 0L,
+            )
+        }
         if (!running) setState(ConvState.IDLE)
         return rec
     }
@@ -676,7 +742,9 @@ class ConversationController(
     internal fun testSpeechOnset() = onSpeechStart()
 
     private fun setState(s: ConvState) {
-        stateMachine.transitionTo(s)
+        // The state machine only rejects transitions that would be nonsense for the UI; after a
+        // recovery the loop may legitimately re-enter LISTENING from any state.
+        runCatching { stateMachine.transitionTo(s) }.onFailure { Log.w(TAG, "state ${state.name} -> ${s.name}: ${it.message}") }
         onState(s)
         eventLogger?.log("state.changed", attributes = mapOf("state" to s.name))
         Log.i(TAG, "state=$s")

@@ -297,6 +297,7 @@ class SpeechTurnRunnerToolTest {
             tools = ToolRegistry(listOf(FakeClockTool())),
         ).run(epoch.next(), "full prompt", "what time is it", 0L, onDelta = {})
 
+        logger.flush()
         val lines = file.readLines()
         val clauses = lines.count { it.contains("\"event\":\"tts.chunk_request\"") }
         val requestsOut = lines.count { it.contains("\"event\":\"mcp.request\"") && it.contains("\"direction\":\"out\"") && it.contains("\"method\":\"tools/call\"") }

@@ -35,8 +35,36 @@ class RuntimeInitializer(private val context: Context) {
         val status: String,
     )
 
+    /**
+     * Loads every engine. Blocking (seconds): the caller runs it off the main thread.
+     *
+     * The CPU-side engines (sherpa-onnx ASR, the GTCRN enhancer, the VAD file check) load on a
+     * helper thread WHILE the accelerator-side engines (TTS DLCs on the HTP, then the LLM bundle)
+     * load on this one; the two groups share nothing. The HTP loads stay sequential on purpose:
+     * TTS and Genie open the same DSP session path. Device: ASR alone was ~1.7 s of a ~14 s
+     * sequential start-up.
+     */
     fun initialize(): Result {
+        val t0 = System.nanoTime()
         configureDspEnvironment()
+
+        val asr = OfflineAsr(
+            senseVoiceDir = File(context.filesDir, "asr").absolutePath,
+            dolphinDir = File(context.filesDir, "asr_dolphin").absolutePath,
+            zipformerKoDir = File(context.filesDir, "asr_zipformer_ko").absolutePath,
+        )
+        val enhancer = SpeechEnhancer(File(context.filesDir, "asr_denoiser/gtcrn_simple.onnx").absolutePath)
+        var asrOk = false
+        var enhanceOk = false
+        var vadOk = false
+        val cpuEngines = Thread({
+            asrOk = initializeAsr(asr)
+            enhanceOk = initializeEnhancer(enhancer)
+            val vadModel = File(context.filesDir, "vad/silero_vad.onnx")
+            vadOk = vadModel.exists()
+            if (!vadOk) Log.w(TAG, "silero_vad model absent ??push to ${vadModel.parent} (adb)")
+            else Log.i(TAG, "VAD model present")
+        }, "runtime-init-cpu").apply { start() }
 
         val tts = SupertonicTts()
         val inputBuilder = TtsInputBuilder(context, voice = "F1")
@@ -52,20 +80,9 @@ class RuntimeInitializer(private val context: Context) {
 
         val llmModel = selectLlmModel()
         val (llm, llmOk) = initializeLlm(llmModel)
-        val asr = OfflineAsr(
-            senseVoiceDir = File(context.filesDir, "asr").absolutePath,
-            dolphinDir = File(context.filesDir, "asr_dolphin").absolutePath,
-            zipformerKoDir = File(context.filesDir, "asr_zipformer_ko").absolutePath,
-        )
-        val asrOk = initializeAsr(asr)
 
-        val enhancer = SpeechEnhancer(File(context.filesDir, "asr_denoiser/gtcrn_simple.onnx").absolutePath)
-        val enhanceOk = initializeEnhancer(enhancer)
-
-        val vadModel = File(context.filesDir, "vad/silero_vad.onnx")
-        val vadOk = vadModel.exists()
-        if (!vadOk) Log.w(TAG, "silero_vad model absent ??push to ${vadModel.parent} (adb)")
-        else Log.i(TAG, "VAD model present")
+        cpuEngines.join()
+        Log.i(TAG, "runtime initialized in ${(System.nanoTime() - t0) / 1_000_000} ms")
 
         return Result(
             tts = tts,

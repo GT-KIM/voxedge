@@ -26,6 +26,7 @@ class RuntimeEventLoggerTest {
             ),
         )
 
+        logger.flush()
         val line = file.readLines().single()
         assertTrue(line.startsWith("{"))
         assertTrue(line.endsWith("}"))
@@ -52,6 +53,7 @@ class RuntimeEventLoggerTest {
 
         logger.log("session.start")
         logger.log("session.end")
+        logger.flush()
 
         val lines = file.readLines()
         assertEquals(2, lines.size)
@@ -59,6 +61,47 @@ class RuntimeEventLoggerTest {
         assertTrue(lines[0].contains("\"event\":\"session.start\""))
         assertTrue(lines[1].contains("\"seq\":1"))
         assertTrue(lines[1].contains("\"event\":\"session.end\""))
+    }
+
+    @Test
+    fun rotatesTheFileOnceItExceedsTheLimit() {
+        val dir = java.nio.file.Files.createTempDirectory("runtime-events-rotate").toFile()
+        val file = File(dir, "turn_events.jsonl")
+        val logger = RuntimeEventLogger(
+            outputFile = file,
+            clock = FakeClock(wallMs = 1L, monoMs = 2L),
+            maxBytes = 800L,   // one rotation within 12 x ~98 B lines
+        )
+
+        for (i in 0 until 12) logger.log("turn.start", attributes = mapOf("i" to i))   // ~100 B each
+        logger.flush()
+
+        // The old file moved aside, the live file holds the tail, and nothing was lost.
+        val rotated = logger.rotatedFile
+        assertTrue(rotated.exists())
+        val rotatedLines = rotated.readLines()
+        val liveLines = file.readLines()
+        assertTrue(rotatedLines.size >= 4)
+        assertTrue(liveLines.isNotEmpty())
+        assertEquals(12, rotatedLines.size + liveLines.size)
+        assertTrue(liveLines.last().contains("\"i\":11"))
+        logger.close()
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun closeMakesTheTailDurableAndDropsLaterEvents() {
+        val file = File.createTempFile("runtime-events-close", ".jsonl").also { it.deleteOnExit() }
+        file.writeText("")
+        val logger = RuntimeEventLogger(outputFile = file, clock = FakeClock(wallMs = 1L, monoMs = 2L))
+
+        logger.log("session.end")
+        logger.close()
+        logger.log("after.close")
+
+        val lines = file.readLines()
+        assertEquals(1, lines.size)
+        assertTrue(lines[0].contains("\"event\":\"session.end\""))
     }
 
     private class FakeClock(
