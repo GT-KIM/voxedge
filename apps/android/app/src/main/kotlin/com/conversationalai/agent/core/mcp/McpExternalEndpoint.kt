@@ -93,9 +93,14 @@ class McpExternalEndpoint(
         private const val TAG = "McpExternal"
         const val TOOLS_SOCKET = "voxedge-mcp-tools"
         const val TTS_SOCKET = "voxedge-mcp-tts"
+        const val ASR_SOCKET = "voxedge-mcp-asr"
 
         /** Endpoint for the device-tool registry's server (results need no post-processing). */
         fun forTools(server: McpServer) = McpExternalEndpoint(TOOLS_SOCKET, server)
+
+        /** Endpoint for an ASR server. No post-processing: the caller sends the utterance inline
+         *  (`audio_wav`, base64 16-bit WAV) and the transcript is plain text already. */
+        fun forAsr(asr: McpAsr) = McpExternalEndpoint(ASR_SOCKET, asr.server)
 
         /** Endpoint for a TTS server: swaps the in-process `pcm_ref` for an inline WAV audio block. */
         fun forTts(tts: McpTts) = McpExternalEndpoint(TTS_SOCKET, tts.server) { resp -> attachAudio(resp, tts) }

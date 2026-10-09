@@ -16,6 +16,8 @@ enum Mcp {
     static let deviceToolsServerName = "voxedge-device-tools"
     static let ttsServerName = "voxedge-tts"
     static let ttsSpeakTool = "speak"
+    static let asrServerName = "voxedge-asr"
+    static let asrTranscribeTool = "transcribe"
 
     static let jsonRpcVersion = "2.0"
     static let parseError = -32700
@@ -321,5 +323,143 @@ final class McpTts {
         guard let r = try? client.callTool(Mcp.ttsSpeakTool, arguments: args), !r.isError,
               let ref = r.structuredContent?["pcm_ref"] as? String else { return nil }
         return pcmByRef.removeValue(forKey: ref)
+    }
+}
+
+/// The captured-utterance -> ASR boundary as MCP (mirror of Android `McpAsr`): one `transcribe`
+/// tool; audio arrives by handle (`pcm_ref`, in-process) or inline (`audio_wav`, base64 16-bit
+/// PCM WAV, external callers); the transcript is the result's text block and
+/// `structuredContent.text`.
+final class McpAsr {
+    static let transcribeDescriptor = McpToolDescriptor(
+        name: Mcp.asrTranscribeTool,
+        description: "Transcribe one endpointed mono utterance (audio by PCM handle in-process, or inline 16-bit WAV) and return the text.",
+        inputSchema: [
+            "type": "object",
+            "properties": [
+                "pcm_ref": ["type": "string", "description": "in-process PCM handle (float mono)"],
+                "audio_wav": ["type": "string", "description": "base64 16-bit PCM WAV (external callers)"],
+                "sample_rate": ["type": "integer", "description": "sample rate of the pcm_ref audio"],
+                "language": ["type": "string", "description": "ko | en (switches the engine language)"],
+                "engine": ["type": "string", "description": "owned | platform (default: the loop's current engine)"],
+                "utterance_id": ["type": "string", "description": "correlation id for the utterance"],
+                "generation_id": ["type": "integer", "description": "cancel epoch, when already assigned"],
+            ],
+        ]
+    )
+
+    struct Result {
+        let text: String
+        let asrMs: Int
+        let engine: String
+    }
+
+    let server: McpServer
+    let client: McpClient
+    private var pcmByRef: [String: ([Float], Int)] = [:]
+    private var utteranceSeq = 0
+
+    /// `transcribe(samples, sampleRate, engine?, language?)` -> (text, engineName) or nil on failure.
+    init(transcribe: @escaping (_ samples: [Float], _ sampleRate: Int, _ engine: String?, _ language: String?) -> (String, String)?) {
+        let (c, s) = InProcessTransport.pair()
+        var take: ((String) -> ([Float], Int)?)!
+        server = McpServer(
+            name: Mcp.asrServerName,
+            version: "1",
+            tools: [McpToolHandler(descriptor: McpAsr.transcribeDescriptor) { args in
+                let utteranceId = (args["utterance_id"] as? String) ?? "u?"
+                let audio: ([Float], Int)
+                if let ref = args["pcm_ref"] as? String {
+                    guard let a = take(ref) else { return McpCallResult(text: "pcm_ref '\(ref)' not found", isError: true) }
+                    audio = a
+                } else if let b64 = args["audio_wav"] as? String {
+                    guard let bytes = Data(base64Encoded: b64) else {
+                        return McpCallResult(text: "audio_wav is not valid base64", isError: true)
+                    }
+                    guard let a = McpAsr.wavSamples(bytes) else {
+                        return McpCallResult(text: "audio_wav is not a 16-bit PCM WAV", isError: true)
+                    }
+                    audio = a
+                } else {
+                    return McpCallResult(text: "missing audio: pass 'pcm_ref' or 'audio_wav'", isError: true)
+                }
+                if audio.0.isEmpty { return McpCallResult(text: "audio is empty", isError: true) }
+                let t0 = Date()
+                guard let (text, engine) = transcribe(audio.0, audio.1, args["engine"] as? String, args["language"] as? String) else {
+                    return McpCallResult(text: "transcription failed", isError: true)
+                }
+                return McpCallResult(
+                    text: text,
+                    structuredContent: [
+                        "text": text,
+                        "asr_ms": Int(Date().timeIntervalSince(t0) * 1000),
+                        "engine": engine,
+                        "sample_rate": audio.1,
+                        "num_samples": audio.0.count,
+                        "utterance_id": utteranceId,
+                    ]
+                )
+            }],
+            transport: s
+        )
+        client = McpClient(transport: c)
+        take = { [weak self] ref in self?.pcmByRef.removeValue(forKey: ref) }
+        _ = try? client.initialize()
+    }
+
+    /// Loop side: hand one endpointed utterance to ASR through MCP. Nil on a protocol or tool error.
+    func transcribe(samples: [Float], sampleRate: Int, engine: String? = nil, language: String? = nil) -> Result? {
+        utteranceSeq += 1
+        let utteranceId = "u\(utteranceSeq)"
+        let ref = "pcm:\(utteranceId):\(UInt64(Date().timeIntervalSince1970 * 1_000_000))"
+        pcmByRef[ref] = (samples, sampleRate)
+        var args: [String: Any] = ["pcm_ref": ref, "sample_rate": sampleRate, "utterance_id": utteranceId]
+        if let e = engine { args["engine"] = e }
+        if let l = language { args["language"] = l }
+        defer { pcmByRef.removeValue(forKey: ref) }
+        guard let r = try? client.callTool(Mcp.asrTranscribeTool, arguments: args), !r.isError,
+              let sc = r.structuredContent else { return nil }
+        return Result(
+            text: (sc["text"] as? String) ?? r.text,
+            asrMs: (sc["asr_ms"] as? Int) ?? 0,
+            engine: (sc["engine"] as? String) ?? ""
+        )
+    }
+
+    /// RIFF/WAVE 16-bit PCM (mono, or channels averaged) -> float samples + sample rate.
+    static func wavSamples(_ data: Data) -> ([Float], Int)? {
+        let b = [UInt8](data)
+        func le16(_ at: Int) -> Int { Int(b[at]) | (Int(b[at + 1]) << 8) }
+        func le32(_ at: Int) -> Int { le16(at) | (le16(at + 2) << 16) }
+        func tag(_ at: Int) -> String { String(bytes: b[at..<at + 4], encoding: .ascii) ?? "" }
+        guard b.count >= 12, tag(0) == "RIFF", tag(8) == "WAVE" else { return nil }
+        var pos = 12
+        var channels = 0, sampleRate = 0, bits = 0, format = 0
+        while pos + 8 <= b.count {
+            let id = tag(pos)
+            let size = le32(pos + 4)
+            let body = pos + 8
+            guard size >= 0, body + size <= b.count else { return nil }
+            if id == "fmt " {
+                guard size >= 16 else { return nil }
+                format = le16(body); channels = le16(body + 2); sampleRate = le32(body + 4); bits = le16(body + 14)
+            } else if id == "data" {
+                guard format == 1, bits == 16, channels >= 1, sampleRate > 0 else { return nil }
+                let frames = size / (2 * channels)
+                var out = [Float](repeating: 0, count: frames)
+                var p = body
+                for i in 0..<frames {
+                    var acc: Float = 0
+                    for _ in 0..<channels {
+                        acc += Float(Int16(truncatingIfNeeded: le16(p))) / 32768
+                        p += 2
+                    }
+                    out[i] = acc / Float(channels)
+                }
+                return (out, sampleRate)
+            }
+            pos = body + size + (size & 1)
+        }
+        return nil
     }
 }

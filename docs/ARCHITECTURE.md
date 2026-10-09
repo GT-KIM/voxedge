@@ -20,14 +20,14 @@ App launch
 
 - `apps/android`: Android UI, owned offline ASR (sherpa-onnx; platform recognizer as a test option), Qualcomm/LiteRT-LM runtime integration, audio playback, and platform permissions.
 - `apps/ios`: iOS UI, Speech framework integration, ANEMLL/MLX/Core ML runtime integration, audio playback, and platform permissions.
-- `shared/mcp`: the MCP profile (JSON-RPC 2.0 servers for the device tools and for TTS `speak`), runtime event schema, and turn record used between LLM output and TTS input.
+- `shared/mcp`: the MCP profile (JSON-RPC 2.0 servers for the device tools, for TTS `speak`, and for ASR `transcribe`), runtime event schema, and turn record used between LLM output and TTS input.
 - `shared/prompts`: prompt templates that both platforms load or embed consistently.
 - `shared/config`: configuration keys shared by Android and iOS.
 - `tools/model_compile`: host-side conversion and benchmark workflows.
 
 ## Detailed specs
 
-- MCP boundaries (device tools + LLM->TTS clause handoff), runtime streaming events, turn record:
+- MCP boundaries (device tools + LLM->TTS clause handoff + utterance->ASR handoff), runtime streaming events, turn record:
   `shared/mcp/README.md`, `shared/mcp/conversation_events.schema.json`, `docs/design/mcp_boundary.md`.
 - Typed shared configuration: `shared/config/config.schema.json`.
 - First-audio latency waterfall + P50/P95 targets: `docs/design/latency_budget.md`.

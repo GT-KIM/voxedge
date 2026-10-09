@@ -6,6 +6,8 @@ import com.conversationalai.agent.audio.MicStream
 import com.conversationalai.agent.audio.PcmStreamPlayer
 import com.conversationalai.agent.audio.SpeechEnhancer
 import com.conversationalai.agent.audio.StreamingPcmPlayer
+import com.conversationalai.agent.core.mcp.McpAsr
+import com.conversationalai.agent.core.mcp.McpMessageTap
 import com.conversationalai.agent.llm.LlmEngine
 import com.conversationalai.agent.tts.ClauseInputBuilder
 import com.conversationalai.agent.tts.TtsEngine
@@ -75,6 +77,24 @@ class ConversationController(
     /** OS-thermal-status driven degrade policy: caps TTS flow steps and the response-token cap,
      *  and pauses new turns at CRITICAL. Fed by [onThermalStatus] (ThermalMonitor on Android). */
     val thermal = ThermalPolicy()
+
+    /** The utterance -> ASR boundary (MCP server + in-process client around [asr]); every
+     *  transcription of a captured utterance is a `tools/call transcribe`. Traffic is logged like
+     *  the turn runner's MCP legs (`mcp.request` / `mcp.response`; no generation id yet at ASR time). */
+    private val asrMcp = McpAsr(asr).also { mcp ->
+        if (eventLogger != null) {
+            mcp.tap = McpMessageTap { direction, method, id, isError, bytes ->
+                eventLogger.log(
+                    event = if (method != null) "mcp.request" else "mcp.response",
+                    attributes = linkedMapOf<String, Any?>(
+                        "direction" to direction, "method" to method, "id" to id,
+                        "error" to isError, "bytes" to bytes, "server" to McpAsr.SERVER_NAME,
+                    ),
+                )
+            }
+        }
+    }
+    private var utteranceSeq = 0L
 
     /** User's response-token cap (settings); the LLM receives [ThermalPolicy.maxResponseTokens] of it. */
     @Volatile var maxResponseTokens: Int = LlmEngine.DEFAULT_MAX_RESPONSE_TOKENS
@@ -502,8 +522,19 @@ class ConversationController(
     private fun transcribeSamples(utterance: FloatArray, event: String): Pair<String, Long>? {
         val t0 = System.nanoTime()
         val (clean, sr) = enhancer?.enhance(utterance, 16000) ?: (utterance to 16000)
-        val text = asr.transcribe(clean, sr)
+        val utteranceId = "u${utteranceSeq++}"
+        val heard = asrMcp.transcribe(clean, sr, utteranceId = utteranceId)
         val asrMs = (System.nanoTime() - t0) / 1_000_000
+        if (heard == null) {
+            Log.w(TAG, "transcribe failed (${asrMcp.lastError}); treating as no speech")
+            eventLogger?.log(
+                event = "asr.no_speech",
+                elapsedMs = asrMs,
+                attributes = mapOf("asr_ms" to asrMs, "sample_rate" to sr, "samples" to clean.size, "error" to asrMcp.lastError),
+            )
+            return null
+        }
+        val text = heard.text
         if (!hasSpeech(text)) {
             eventLogger?.log(
                 event = "asr.no_speech",
@@ -521,7 +552,8 @@ class ConversationController(
                 "sample_rate" to sr,
                 "samples" to clean.size,
                 "text_chars" to text.length,
-                "asr_engine" to asr.name(),
+                "asr_engine" to heard.engine,
+                "utterance_id" to utteranceId,
             ),
         )
         Log.i(TAG, "heard/$event (${asrMs}ms): $text")

@@ -20,8 +20,9 @@ IOS_MCP = ROOT / "apps" / "ios" / "Core" / "Mcp.swift"
 
 PROTOCOL_VERSION = "2025-06-18"
 METHODS = {"initialize", "notifications/initialized", "ping", "tools/list", "tools/call"}
-SERVERS = {"voxedge-device-tools", "voxedge-tts"}
+SERVERS = {"voxedge-device-tools", "voxedge-tts", "voxedge-asr"}
 SPEAK_TOOL = "speak"
+TRANSCRIBE_TOOL = "transcribe"
 ERROR_CODES = {-32700, -32600, -32601, -32602, -32603}
 
 
@@ -70,7 +71,10 @@ class McpFixtureTest(unittest.TestCase):
 
     def test_tools_call_results_follow_mcp_content_shape(self):
         fx = load_fixtures()
-        for name in ("tools_call.response.json", "tools_call.tool_error.response.json", "speak.response.json"):
+        for name in (
+            "tools_call.response.json", "tools_call.tool_error.response.json",
+            "speak.response.json", "transcribe.response.json",
+        ):
             result = fx[name]["result"]
             with self.subTest(fixture=name):
                 self.assertIsInstance(result["isError"], bool)
@@ -93,6 +97,18 @@ class McpFixtureTest(unittest.TestCase):
         self.assertEqual(sc["sample_rate"], 44100)
         self.assertNotIn("pcm", sc)
         self.assertNotIn("audio", fx["speak.response.json"]["result"])
+
+    def test_transcribe_call_keeps_audio_out_of_json_and_returns_text(self):
+        fx = load_fixtures()
+        req = fx["transcribe.request.json"]["params"]
+        self.assertEqual(req["name"], TRANSCRIBE_TOOL)
+        self.assertEqual(set(req["arguments"]) >= {"pcm_ref", "sample_rate", "utterance_id"}, True)
+        self.assertNotIn("audio_wav", req["arguments"])   # in-process: by handle, never inline
+        result = fx["transcribe.response.json"]["result"]
+        sc = result["structuredContent"]
+        self.assertEqual(set(sc) >= {"text", "asr_ms", "engine", "sample_rate", "num_samples"}, True)
+        self.assertEqual(result["content"][0]["text"], sc["text"])
+        self.assertEqual(sc["sample_rate"], 16000)
 
 
 class McpPlatformParityTest(unittest.TestCase):
@@ -120,6 +136,8 @@ class McpPlatformParityTest(unittest.TestCase):
             self.assertIn(f'"{server}"', swift)
         self.assertIn(f'TOOL_SPEAK = "{SPEAK_TOOL}"', kotlin)
         self.assertIn(f'ttsSpeakTool = "{SPEAK_TOOL}"', swift)
+        self.assertIn(f'TOOL_TRANSCRIBE = "{TRANSCRIBE_TOOL}"', kotlin)
+        self.assertIn(f'asrTranscribeTool = "{TRANSCRIBE_TOOL}"', swift)
 
     def test_android_server_handles_every_profile_method(self):
         server = (ANDROID_MCP / "Mcp.kt").read_text(encoding="utf-8")
@@ -135,6 +153,15 @@ class McpPlatformParityTest(unittest.TestCase):
         self.assertIn("ttsMcp.speak(", runner)
         self.assertNotIn("tts.synthesizeClause(", runner)
 
+    def test_every_asr_call_goes_through_mcp(self):
+        controller = (ANDROID_MCP.parent / "ConversationController.kt").read_text(encoding="utf-8")
+        self.assertIn("asrMcp.transcribe(", controller)
+        self.assertNotIn("asr.transcribe(", controller)
+        main = (ANDROID_MCP.parent.parent / "ui" / "MainActivity.kt").read_text(encoding="utf-8")
+        self.assertIn("asrMcp.transcribe(", main)
+        self.assertNotIn("asrSwitch.transcribe(", main)
+        self.assertNotIn("asr.transcribe(", main)
+
 
 class McpExternalEndpointTest(unittest.TestCase):
     def test_external_endpoint_uses_local_sockets_not_network(self):
@@ -142,6 +169,7 @@ class McpExternalEndpointTest(unittest.TestCase):
         self.assertIn("LocalServerSocket", src)
         self.assertIn('TOOLS_SOCKET = "voxedge-mcp-tools"', src)
         self.assertIn('TTS_SOCKET = "voxedge-mcp-tts"', src)
+        self.assertIn('ASR_SOCKET = "voxedge-mcp-asr"', src)
         self.assertIn("server.handleText(line)", src)
         self.assertIn('"type" to "audio"', src)
         for forbidden in (" ServerSocket(", "InetAddress", "java.net", "127.0.0.1"):
@@ -161,6 +189,8 @@ class McpExternalEndpointTest(unittest.TestCase):
         for method in ("initialize", "notifications/initialized", "tools/list", "tools/call"):
             self.assertIn(f'"{method}"', client)
         self.assertIn("localabstract:voxedge-mcp-tools", client)
+        self.assertIn("localabstract:voxedge-mcp-asr", client)
+        self.assertIn('"audio_wav"', client)
 
 
 class McpDocsTest(unittest.TestCase):
@@ -174,6 +204,8 @@ class McpDocsTest(unittest.TestCase):
             self.assertIn(server, text)
         self.assertIn("docs/design/mcp_boundary.md", text)
         self.assertIn("localabstract:voxedge-mcp-tools", text)
+        self.assertIn("localabstract:voxedge-mcp-asr", text)
+        self.assertIn(f"`{TRANSCRIBE_TOOL}`", text)
 
     def test_event_schema_lists_mcp_events(self):
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))

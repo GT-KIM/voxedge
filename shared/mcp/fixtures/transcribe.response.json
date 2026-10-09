@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"지금 몇 시야"}],"isError":false,"structuredContent":{"text":"지금 몇 시야","asr_ms":84,"engine":"sherpa-onnx zipformer-ko (offline, lang=ko)","sample_rate":16000,"num_samples":28800,"utterance_id":"u0"}}}

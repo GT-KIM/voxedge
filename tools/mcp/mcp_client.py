@@ -11,8 +11,12 @@ switched on in the diagnostics panel. Reach them from the host through adb port 
     adb forward tcp:7778 localabstract:voxedge-mcp-tts
     python tools/mcp/mcp_client.py --port 7778 tools/call speak text="Hello there." language=en --save out.wav
 
-`--save` writes the `audio` content block (WAV) of a speak result to a file. The client always runs
-the `initialize` handshake first, exactly like the in-app client.
+    adb forward tcp:7779 localabstract:voxedge-mcp-asr
+    python tools/mcp/mcp_client.py --port 7779 tools/call transcribe --audio ko.wav language=ko engine=owned
+
+`--save` writes the `audio` content block (WAV) of a speak result to a file. `--audio` sends a
+16-bit PCM WAV file inline as the `audio_wav` argument (base64) of a transcribe call. The client
+always runs the `initialize` handshake first, exactly like the in-app client.
 """
 
 import argparse
@@ -86,6 +90,7 @@ def main() -> int:
     ap.add_argument("tool", nargs="?", help="tool name for tools/call")
     ap.add_argument("args", nargs="*", help="tool arguments as key=value")
     ap.add_argument("--save", help="write the audio content block of the result to this WAV file")
+    ap.add_argument("--audio", help="send this 16-bit PCM WAV file inline as the audio_wav argument")
     a = ap.parse_args()
 
     client = McpLineClient(a.host, a.port)
@@ -105,7 +110,11 @@ def main() -> int:
             return 0
         if not a.tool:
             raise SystemExit("tools/call needs a tool name")
-        result = client.request("tools/call", {"name": a.tool, "arguments": parse_args_kv(a.args)})
+        arguments = parse_args_kv(a.args)
+        if a.audio:
+            with open(a.audio, "rb") as f:
+                arguments["audio_wav"] = base64.b64encode(f.read()).decode("ascii")
+        result = client.request("tools/call", {"name": a.tool, "arguments": arguments})
         print(f"isError: {result.get('isError')}")
         for block in result.get("content", []):
             if block.get("type") == "text":

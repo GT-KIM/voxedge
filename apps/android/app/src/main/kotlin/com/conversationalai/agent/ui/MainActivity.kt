@@ -17,6 +17,7 @@ import com.conversationalai.agent.asr.OfflineAsr
 import com.conversationalai.agent.asr.PlatformAsr
 import com.conversationalai.agent.asr.SwitchableAsr
 import com.conversationalai.agent.core.ThermalMonitor
+import com.conversationalai.agent.core.mcp.McpAsr
 import com.conversationalai.agent.core.mcp.McpExternalEndpoint
 import com.conversationalai.agent.core.mcp.McpTts
 import com.conversationalai.agent.audio.AudioCapture
@@ -64,6 +65,10 @@ class MainActivity : ComponentActivity() {
     // comparison runs; the controller always talks to the switch (owned engine by default).
     private lateinit var platformAsr: PlatformAsr
     private lateinit var asrSwitch: SwitchableAsr
+    // The utterance -> ASR boundary as MCP for every ASR call made from the UI layer (push-to-talk,
+    // diagnostics, the headless compare hook) and for the external endpoint. The hands-free loop
+    // owns its own McpAsr inside ConversationController around the same switchable engine.
+    private lateinit var asrMcp: McpAsr
     // External MCP endpoints (debug): the SAME tool server the loop uses + a TTS server over the
     // same engine. Created on first use, never persisted, off by default.
     private var mcpEndpoints: List<McpExternalEndpoint> = emptyList()
@@ -156,6 +161,27 @@ class MainActivity : ComponentActivity() {
         asr = runtime.asr
         platformAsr = PlatformAsr(this)
         asrSwitch = SwitchableAsr(owned = asr, platform = platformAsr)
+        asrMcp = McpAsr(
+            asr = asrSwitch,
+            selectEngine = { name ->
+                when (name) {
+                    "owned" -> asr
+                    "platform" -> {
+                        val availability = platformAsr.checkAvailability()
+                        Log.i(TAG, "mcp transcribe engine=platform usable=${availability.usable} (${availability.detail})")
+                        if (availability.usable) platformAsr else null
+                    }
+                    else -> null
+                }
+            },
+            setLanguage = { lang ->
+                if (lang != "ko" && lang != "en") false
+                else {
+                    platformAsr.setLanguage(lang)
+                    asr.setLanguage(lang)
+                }
+            },
+        )
         enhancer = runtime.enhancer
         initOk = runtime.initOk
         llmOk = runtime.llmOk
@@ -279,8 +305,8 @@ class MainActivity : ComponentActivity() {
     /** Headless ASR engine comparison (dev-only):
      *  `adb shell am start -n .../.ui.MainActivity --es debug_asr_wav ko --es debug_asr_engine platform`
      *  transcribes filesDir/asr_test/ko.wav through the chosen engine (platform = on-device
-     *  SpeechRecognizer after the availability gate) and logs `debug_asr_wav done: ...`. The
-     *  engine selection is reverted to the owned engine afterwards. */
+     *  SpeechRecognizer after the availability gate) and logs `debug_asr_wav done: ...`. Goes
+     *  through the ASR MCP server's `transcribe` tool; the loop's engine selection is untouched. */
     private fun handleDebugAsrIntent(intent: android.content.Intent?) {
         val wavName = intent?.getStringExtra(EXTRA_DEBUG_ASR_WAV)?.takeIf { it.isNotBlank() } ?: return
         val engine = intent.getStringExtra(EXTRA_DEBUG_ASR_ENGINE) ?: "owned"
@@ -290,25 +316,12 @@ class MainActivity : ComponentActivity() {
             val wav = File(filesDir, "asr_test/$wavName.wav")
             val result = withContext(Dispatchers.Default) {
                 if (!wav.exists()) return@withContext "missing ${wav.path}"
-                asr.setLanguage(lang)
-                platformAsr.setLanguage(lang)
-                var gate = ""
-                if (engine == "platform") {
-                    val availability = platformAsr.checkAvailability()
-                    gate = " usable=${availability.usable} (${availability.detail})"
-                    if (!availability.usable || !asrSwitch.selectPlatform(true)) {
-                        return@withContext "engine=platform NOT RUN$gate"
-                    }
-                }
-                try {
-                    val w = com.k2fsa.sherpa.onnx.WaveReader.readWave(wav.absolutePath)
-                    val t0 = System.nanoTime()
-                    val heard = asrSwitch.transcribe(w.samples, w.sampleRate)
-                    val ms = (System.nanoTime() - t0) / 1_000_000
-                    "engine=${asrSwitch.name()} ms=$ms heard=\"$heard\"$gate"
-                } finally {
-                    asrSwitch.selectPlatform(false)
-                }
+                // Same MCP `transcribe` call an external client makes, with the explicit engine
+                // (the platform engine is resolved through its availability gate) and language.
+                val w = com.k2fsa.sherpa.onnx.WaveReader.readWave(wav.absolutePath)
+                val heard = asrMcp.transcribe(w.samples, w.sampleRate, utteranceId = "debug_asr_wav", engine = engine, language = lang)
+                    ?: return@withContext "engine=$engine NOT RUN (${asrMcp.lastError})"
+                "engine=${heard.engine} ms=${heard.asrMs} heard=\"${heard.text}\""
             }
             Log.i(TAG, "debug_asr_wav done: $result")
         }
@@ -565,9 +578,8 @@ class MainActivity : ComponentActivity() {
                 val raw = capture.stop()
                 if (raw.isEmpty()) return@withContext "" to 0L
                 val (clean, sr) = if (enhanceOk) enhancer.enhance(raw, 16000) else raw to 16000
-                val t0 = System.nanoTime()
-                val t = asrSwitch.transcribe(clean, sr)
-                t to (System.nanoTime() - t0) / 1_000_000
+                val heard = asrMcp.transcribe(clean, sr, utteranceId = "ptt")
+                (heard?.text ?: "") to (heard?.asrMs ?: 0L)
             }
             Log.i(TAG, "heard (${asrMs}ms): $heard")
             if (heard.isBlank()) {
@@ -659,12 +671,13 @@ class MainActivity : ComponentActivity() {
             mcpEndpoints = listOf(
                 McpExternalEndpoint.forTools(toolRegistry.mcp.server),
                 McpExternalEndpoint.forTts(McpTts(tts, inputBuilder)),
+                McpExternalEndpoint.forAsr(asrMcp),
             )
         }
         val ok = mcpEndpoints.map { it.start() }.all { it }
         setEnabled(ok)
         setMsg(
-            if (ok) "external MCP endpoint on: ${McpExternalEndpoint.TOOLS_SOCKET}, ${McpExternalEndpoint.TTS_SOCKET}"
+            if (ok) "external MCP endpoint on: ${McpExternalEndpoint.TOOLS_SOCKET}, ${McpExternalEndpoint.TTS_SOCKET}, ${McpExternalEndpoint.ASR_SOCKET}"
             else "external MCP endpoint failed to start (see logcat McpExternal)",
         )
         eventLogger.log("control.mcp_endpoint", attributes = mapOf("enabled" to ok))
@@ -692,9 +705,8 @@ class MainActivity : ComponentActivity() {
             val wav = File(filesDir, "asr_test/ko.wav")
             val (txt, ms) = withContext(Dispatchers.Default) {
                 val w = com.k2fsa.sherpa.onnx.WaveReader.readWave(wav.absolutePath)
-                val t0 = System.nanoTime()
-                val t = asrSwitch.transcribe(w.samples, w.sampleRate)
-                t to (System.nanoTime() - t0) / 1_000_000
+                val heard = asrMcp.transcribe(w.samples, w.sampleRate, utteranceId = "diag")
+                (heard?.text ?: "(${asrMcp.lastError})") to (heard?.asrMs ?: 0L)
             }
             Log.i(TAG, "ASR ${ms}ms -> $txt")
             setMsg("ASR ${ms}ms: $txt")

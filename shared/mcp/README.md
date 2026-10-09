@@ -3,9 +3,10 @@
 This directory holds the contract between pipeline stages (ASR → prompt → LLM → tools → TTS →
 playback) and between the two platforms. It has three parts:
 
-1. **MCP boundaries** (this file, `fixtures/`). The LLM's tool calls and the LLM-output → TTS-input
-   clause handoff are **Model Context Protocol** exchanges: JSON-RPC 2.0 messages between an MCP
-   client on the LLM side and in-process MCP servers. MCP is a project requirement; the profile
+1. **MCP boundaries** (this file, `fixtures/`). The LLM's tool calls, the LLM-output → TTS-input
+   clause handoff, and the captured-utterance → ASR handoff are **Model Context Protocol**
+   exchanges: JSON-RPC 2.0 messages between an in-process MCP client on the loop side and
+   in-process MCP servers. MCP is a project requirement; the profile
    below is what both platforms implement.
 2. **Runtime streaming events** ([`conversation_events.schema.json`](conversation_events.schema.json),
    `Event`). Low-latency, ordered events between stages (`asr.final`, `llm.text_delta`,
@@ -22,8 +23,8 @@ the shipped runtime uses an **in-process transport** (no local network bridge, a
 runtime unchanged). The same server objects can additionally be exposed through an **external
 endpoint** (off by default, switched on in the diagnostics panel or with
 `--ez debug_mcp_endpoint true` on the launch intent): newline-delimited JSON-RPC over Android
-abstract local sockets `voxedge-mcp-tools` and `voxedge-mcp-tts`. Nothing listens on a TCP port and
-no network permission is involved; a host reaches them through adb:
+abstract local sockets `voxedge-mcp-tools`, `voxedge-mcp-tts`, and `voxedge-mcp-asr`. Nothing
+listens on a TCP port and no network permission is involved; a host reaches them through adb:
 
 ```
 adb forward tcp:7777 localabstract:voxedge-mcp-tools
@@ -31,12 +32,15 @@ python tools/mcp/mcp_client.py --port 7777 tools/list
 python tools/mcp/mcp_client.py --port 7777 tools/call calculate expression="18+47"
 adb forward tcp:7778 localabstract:voxedge-mcp-tts
 python tools/mcp/mcp_client.py --port 7778 tools/call speak text="Hello there." language=en --save hello.wav
+adb forward tcp:7779 localabstract:voxedge-mcp-asr
+python tools/mcp/mcp_client.py --port 7779 tools/call transcribe --audio ko.wav language=ko engine=owned
 ```
 
 Over the external endpoint a `speak` result carries the audio inline as an MCP `audio` content
 block (`audio/wav`, base64) and `structuredContent.audio_bytes` instead of the in-process
-`pcm_ref`, since the caller cannot redeem a handle. The confirmation gate applies to external tool
-calls exactly as to the model's.
+`pcm_ref`, since the caller cannot redeem a handle. Symmetrically, an external `transcribe` call
+sends its audio inline as the base64 WAV argument `audio_wav` instead of a `pcm_ref`. The
+confirmation gate applies to external tool calls exactly as to the model's.
 
 Methods both platforms must implement (server) and use (client):
 
@@ -82,6 +86,33 @@ to TTS.
 keeps the clause-streaming latency path: one short request per clause, encode/decode in
 microseconds against a ~220 ms synthesis, no audio in JSON. A synthesis failure is
 `isError: true` and the clause is dropped (logged as `tts.chunk_dropped`).
+
+### Server `voxedge-asr`
+
+One tool, `transcribe`: a captured utterance, endpointed by VAD (and optionally enhanced), formatted
+as MCP and handed to the speech recognizer. The unit is the finished utterance, so VAD, capture,
+and the mic stay outside MCP; the loop's own ASR calls, the push-to-talk path, and the diagnostics
+test all go through this server.
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"transcribe","arguments":{
+  "pcm_ref":"pcm:u0:5678","sample_rate":16000,"utterance_id":"u0"}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"지금 몇 시야"}],
+  "isError":false,"structuredContent":{"text":"지금 몇 시야","asr_ms":84,
+  "engine":"sherpa-onnx zipformer-ko (offline, lang=ko)","sample_rate":16000,"num_samples":28800,
+  "utterance_id":"u0"}}}
+```
+
+In-process the audio travels by handle (`pcm_ref`, the client's own float buffer, no copy). An
+external caller passes `audio_wav` (base64 16-bit PCM WAV; multi-channel is averaged to mono)
+instead, and may add `engine` (`owned` | `platform`, the platform recognizer only after its
+language-pack gate passes) and `language` (`ko` | `en`) for comparison runs; without them the
+loop's current engine and language are used. The transcript is the text block and
+`structuredContent.text`; an empty transcript is a normal result. A recognizer failure is
+`isError: true` and the loop treats the utterance as "nothing heard" (`asr.no_speech`).
 
 ### Fixtures
 

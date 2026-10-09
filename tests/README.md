@@ -31,13 +31,14 @@ Current coverage:
 - Runtime event logging: Android writes app-private JSONL events for ASR, LLM, TTS, playback, and
   turn-level latency evidence.
 - MCP contract: shared fixtures are valid JSON-RPC 2.0 / MCP messages; Android and iOS pin the same
-  protocol revision, methods, server and tool names; tool dispatch and the TTS clause handoff go
-  through MCP; the external endpoint uses local sockets, is off by default, and is not persisted.
+  protocol revision, methods, server and tool names; tool dispatch, the TTS clause handoff, and
+  every ASR call go through MCP; the external endpoint uses local sockets, is off by default, and
+  is not persisted.
 - Platform ASR option: on-device recognizer only, language-pack gated, selectable from diagnostics,
   never persisted; the owned engine stays the default and `OfflineAsr` is untouched.
 - Tool-eval golden set: structure of `tools/llm/tool_eval_set.json`.
 - Android JVM tests (`apps/android`, `gradlew :app:testDebugUnitTest`) cover the runner, tool
-  loop, MCP codec/server/client/bridge/TTS server, platform-ASR logic, and settings.
+  loop, MCP codec/server/client/bridge/TTS server/ASR server, platform-ASR logic, and settings.
 
 Run:
 

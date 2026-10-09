@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"transcribe","arguments":{"pcm_ref":"pcm:u0:5678","sample_rate":16000,"utterance_id":"u0"}}}
