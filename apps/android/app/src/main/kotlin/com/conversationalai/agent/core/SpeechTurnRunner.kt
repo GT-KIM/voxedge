@@ -445,7 +445,7 @@ class SpeechTurnRunner(
 
         // Prosody finishing (44.1 kHz samples): breath pauses between clauses + click-free joins.
         private const val SENTENCE_ENDERS = ".!?…。！？"
-        private const val CLAUSE_ENDERS = ",;:、，；："
+        private const val CLAUSE_ENDERS = ",;:、，；：—–"   // incl. em/en dash
         const val SENTENCE_PAUSE_SAMPLES = 7938   // ~180 ms
         const val CLAUSE_PAUSE_SAMPLES = 3528     // ~80 ms
         private const val EDGE_FADE_SAMPLES = 220 // ~5 ms

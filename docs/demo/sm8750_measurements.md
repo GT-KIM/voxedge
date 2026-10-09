@@ -136,6 +136,17 @@ Readings:
   41.7 °C, status 3 not seen up to 44.0 °C.
 - Open: a control run without the policy past status 2 (needs a debug switch to disable it), and a
   longer run to see whether status 2 is a plateau or just slower growth.
+- **Correction (2026-10-09, later the same day):** the first-PCM figures of this run and the
+  2026-10-06 Qwen3 runs include turns whose first clause was silently dropped by TTS: the unicode
+  indexer had no entry for the em dash (and en dash, curly quotes), so a clause such as
+  "Start with water—drink" failed the duration-predictor and text-encoder executes twice and the
+  next clause's audio was counted as first PCM (en-advice ~1.5 s instead of ~0.6 s; 21 dropped
+  clauses in the 36 turns above). The app now applies the reference text preprocessing before
+  indexing and splits clauses at dashes. Re-run of the same battery with that build (Qwen3,
+  airplane mode on, 10 turns, 3 min, cool start): 0 dropped clauses, en-advice first PCM
+  **565 ms**, the other warm EN turns 643-729 ms and KO 876-1047 ms as before, language-switch
+  turns 1.67-1.76 s. The decode rate (~11 chunks/s) and the language-switch cost are unchanged by
+  this fix.
 
 ## ASR — owned, offline (sherpa-onnx, per-language)
 

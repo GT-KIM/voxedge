@@ -1,8 +1,8 @@
 package com.conversationalai.agent.tts
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONObject
-import java.text.Normalizer
 import kotlin.random.Random
 
 /**
@@ -57,8 +57,16 @@ class TtsInputBuilder(context: Context, voice: String = "F1") : ClauseInputBuild
 
     /** Build inputs for one short clause (<= T tokens after framing). */
     override fun build(text: String, lang: String, seed: Long): TtsInputs {
-        val s = preprocess(text, lang)
-        val ids = IntArray(s.length) { indexer[s[it].code] }
+        val s = TtsTextNormalizer.frame(text, lang)
+        // Last line of defence: a code point the normalizer does not cover and the indexer does
+        // not know (-1) must never reach the DLC - it fails the dp/te executes outright. Drop it
+        // and say so once per clause; the normalizer table is where the real fix belongs.
+        val unmapped = s.filter { indexer[it.code] < 0 }
+        if (unmapped.isNotEmpty()) {
+            Log.w(TAG, "dropping ${unmapped.length} unmapped code point(s): " +
+                unmapped.map { "U+%04X".format(it.code) }.distinct().joinToString(" "))
+        }
+        val ids = s.mapNotNull { indexer[it.code].takeIf { id -> id >= 0 } }.toIntArray()
         require(ids.size <= T) { "clause too long for T=$T: ${ids.size} tokens — split it" }
 
         val textIds = IntArray(T)
@@ -92,13 +100,6 @@ class TtsInputBuilder(context: Context, voice: String = "F1") : ClauseInputBuild
             latentMask = latentMask,
             speed = speed,
         )
-    }
-
-    private fun preprocess(text: String, lang: String): String {
-        var t = Normalizer.normalize(text, Normalizer.Form.NFKD)
-        t = t.replace(Regex("\\s+"), " ").trim()
-        if (!Regex("[.!?;:,]$").containsMatchIn(t)) t += "."
-        return "<$lang>$t</$lang>"
     }
 
     private fun readData(obj: JSONObject): FloatArray {
@@ -136,6 +137,7 @@ class TtsInputBuilder(context: Context, voice: String = "F1") : ClauseInputBuild
     }
 
     companion object {
+        private const val TAG = "TtsInputBuilder"
         const val T = 64
         const val LAT = 128
         const val LDIM_CCF = 144   // latent_dim(24) * chunk_compress_factor(6)

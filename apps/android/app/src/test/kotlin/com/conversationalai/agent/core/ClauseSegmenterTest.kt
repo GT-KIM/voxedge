@@ -77,6 +77,29 @@ class ClauseSegmenterTest {
     }
 
     @Test
+    fun emDashIsAClauseBoundaryLikeAComma() {
+        // The 2026-10-09 device case: without the split, the 63-char first clause took 1.5 s to
+        // decode and then failed in TTS (em dash unmapped). The dash stays on the head clause; the
+        // TTS normalizer drops it before synthesis.
+        assertEquals(
+            listOf("Start with water—", "drink a glass of water as soon as you wake up."),
+            segment("Start with water—drink a glass of water as soon as you wake up."),
+        )
+        // Below the first-clause weak threshold the dash does not split (no tiny fragments).
+        assertEquals(listOf("Yes—sure thing."), segment("Yes—sure thing."))
+    }
+
+    @Test
+    fun curlyApostrophesAndQuotesAreKeptForTheTtsNormalizer() {
+        // Dropping U+2019 used to turn "I'm" into "Im" on the speech path.
+        assertEquals(
+            listOf("I’m doing great—", "just like you."),
+            segment("I’m doing great—just like you."),
+        )
+        assertEquals(listOf("She said “no” today."), segment("She said “no” today."))
+    }
+
+    @Test
     fun commasSplitRestClausesOnlyAfterSubstantialText() {
         val text = "Okay. Then comes a longer second thought, which continues onward."
         val clauses = segment(text)

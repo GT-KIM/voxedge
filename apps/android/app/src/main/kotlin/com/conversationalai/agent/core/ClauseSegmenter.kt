@@ -10,8 +10,9 @@ import java.text.Normalizer
  *  - STRONG sentence enders flush — but trailing closers (quotes/brackets) and ender runs
  *    ("...", "!?") stay WITH the sentence instead of dangling into the next clause;
  *  - '.' and ',' BETWEEN DIGITS are content, not boundaries (0.008, 1,000);
- *  - WEAK separators (commas) flush only once a substantial phrase has accumulated — no more
- *    "네," fragments — with a lower threshold for the first clause to keep first-audio fast;
+ *  - WEAK separators (commas, em/en dashes) flush only once a substantial phrase has
+ *    accumulated — no more "네," fragments — with a lower threshold for the first clause to keep
+ *    first-audio fast;
  *  - on budget overflow the break backtracks to the last space, else the last weak punctuation,
  *    and only then hard-cuts (spaceless Korean longer than the budget);
  *  - sanitizes input: drops control/symbol chars and any codepoint > U+FFFF (emoji), so the
@@ -137,11 +138,17 @@ class ClauseSegmenter(
     companion object {
         // Sentence enders (flush, after absorbing trailing closers): KO/EN/CJK.
         private const val STRONG = ".!?…。！？\n"
-        // Clause separators (flush once a substantial phrase has accumulated).
-        private const val WEAK = ",;:、，；："
+        // Clause separators (flush once a substantial phrase has accumulated). Em/en dashes
+        // (U+2014/U+2013) count: Qwen3 writes "Start with water—drink ..." constantly, and a dash
+        // is a spoken pause like a comma. The TTS normalizer strips the trailing dash before
+        // synthesis, so the clause is spoken as "Start with water."
+        private const val WEAK = ",;:、，；：—–"
         // Closing punctuation that belongs to the JUST-ENDED sentence, not the next clause.
         private const val CLOSERS = "\"')]}”’»」』"
-        // Speakable punctuation kept inside a clause.
-        private const val KEEP_PUNCT = ".!?;:,…。！？；：、，'\"()-—~ "
+        // Speakable punctuation kept inside a clause. Curly quotes/apostrophes (U+2018/2019,
+        // U+201C/201D) stay so "I’m" reaches TTS as "I'm" (TtsTextNormalizer maps them to
+        // ASCII) instead of being dropped to "Im".
+        private const val KEEP_PUNCT =
+            ".!?;:,…。！？；：、，'\"()-—–~ ‘’“”"
     }
 }
